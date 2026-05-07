@@ -1,0 +1,30 @@
+name: catcheye-pick-raspbian
+services:
+  catcheye-pick-dev:
+    extends:
+      file: docker-compose.base.yml
+      service: robot-base
+    image: ghcr.io/itschurry/catcheye-pick:develop-raspbian
+    container_name: catcheye-pick-develop-raspbian
+    working_dir: /home/user/catcheye-pick
+    privileged: true
+    environment:
+      - BUILD_TYPE=develop
+      - LD_LIBRARY_PATH=/home/user/catcheye-pick/third_party/CubeEye2.0-sdk/lib
+    volumes:
+      - ../:/home/user/catcheye-pick:rw
+      - /dev:/dev
+      - ${HOME}/shared:/mnt/shared:rw
+      - ${HOME}/.ssh:/home/user/.ssh:ro
+      - vscode_server:/home/user/.vscode-server:rw
+      - vscode_server_ext:/home/user/.vscode-server/extensions:rw
+      - vscode_server_data:/home/user/.vscode-server/data:rw
+
+    command: bash
+    stdin_open: true
+    tty: true
+
+volumes:
+  vscode_server:
+  vscode_server_ext:
+  vscode_server_data:
