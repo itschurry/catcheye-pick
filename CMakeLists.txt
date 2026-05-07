@@ -51,6 +51,7 @@ if(NOT EXISTS "${CUBEYE_LIBRARY}")
 endif()
 
 set(CUBEYE_RUNTIME_LIBRARIES "${CUBEYE_LIBRARY}")
+set(CUBEYE_LINK_LIBRARIES)
 foreach(cubeye_runtime_library_dir IN LISTS CUBEYE_RUNTIME_LIBRARY_DIRS)
     if(EXISTS "${cubeye_runtime_library_dir}")
         file(GLOB cubeye_runtime_libraries
@@ -58,9 +59,16 @@ foreach(cubeye_runtime_library_dir IN LISTS CUBEYE_RUNTIME_LIBRARY_DIRS)
             "${cubeye_runtime_library_dir}/*.so.*"
         )
         list(APPEND CUBEYE_RUNTIME_LIBRARIES ${cubeye_runtime_libraries})
+
+        file(GLOB cubeye_link_libraries
+            "${cubeye_runtime_library_dir}/*.so"
+            "${cubeye_runtime_library_dir}/*.so.[0-9]*"
+        )
+        list(APPEND CUBEYE_LINK_LIBRARIES ${cubeye_link_libraries})
     endif()
 endforeach()
 list(REMOVE_DUPLICATES CUBEYE_RUNTIME_LIBRARIES)
+list(REMOVE_DUPLICATES CUBEYE_LINK_LIBRARIES)
 
 set(CATCHEYE_VISION_SDK_BUILD_TESTS OFF CACHE BOOL "Build tests for SDK libraries" FORCE)
 
@@ -77,6 +85,8 @@ add_library(cubeye_sdk SHARED IMPORTED GLOBAL)
 set_target_properties(cubeye_sdk PROPERTIES
     IMPORTED_LOCATION "${CUBEYE_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${CUBEYE_INCLUDE_DIR}/CubeEye"
+    INTERFACE_LINK_LIBRARIES "${CUBEYE_LINK_LIBRARIES}"
+    INTERFACE_LINK_OPTIONS "$<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,-rpath-link,${CUBEYE_SDK_SOURCE_DIR}/thirdparty/libffmpeg/lib;-Wl,-rpath-link,${CUBEYE_SDK_SOURCE_DIR}/thirdparty/liblive555/lib/Release;-Wl,-rpath-link,${CUBEYE_SDK_SOURCE_DIR}/thirdparty/libusb/lib>"
 )
 add_library(cubeye::sdk ALIAS cubeye_sdk)
 
@@ -96,6 +106,7 @@ target_include_directories(catcheye_pick
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        "${CUBEYE_INCLUDE_DIR}/CubeEye"
 )
 
 target_compile_features(catcheye_pick PUBLIC cxx_std_20)
@@ -113,7 +124,6 @@ target_link_libraries(catcheye_pick
         catcheye::vision_protocol
         catcheye::vision_runtime
         catcheye::vision_transport
-        cubeye::sdk
         ${OpenCV_LIBS}
         spdlog::spdlog
 )
@@ -128,6 +138,7 @@ if(CATCHEYE_PICK_BUILD_APP)
     target_link_libraries(catcheye-pick
         PRIVATE
             catcheye::pick
+            cubeye::sdk
     )
 
     target_include_directories(catcheye-pick
@@ -148,7 +159,7 @@ if(CATCHEYE_PICK_BUILD_TESTS)
 
     if(CATCHEYE_PICK_TEST_SOURCES)
         add_executable(catcheye_pick_tests ${CATCHEYE_PICK_TEST_SOURCES})
-        target_link_libraries(catcheye_pick_tests PRIVATE catcheye::pick)
+        target_link_libraries(catcheye_pick_tests PRIVATE catcheye::pick cubeye::sdk)
         target_include_directories(catcheye_pick_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         add_test(NAME catcheye_pick_tests COMMAND catcheye_pick_tests)
     endif()
@@ -161,6 +172,48 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/catcheye-pick-launcher.sh.in"
     "${CATCHEYE_PICK_LAUNCHER}"
     @ONLY
+)
+
+install(TARGETS catcheye_vision_input
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_detection
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_roi
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_protocol
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_transport
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_runtime
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(TARGETS catcheye_pick
