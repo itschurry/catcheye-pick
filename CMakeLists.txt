@@ -117,13 +117,14 @@ target_compile_definitions(catcheye_pick
 )
 
 target_link_libraries(catcheye_pick
-    PRIVATE
+    PUBLIC
         catcheye::vision_input
         catcheye::vision_detection
         catcheye::vision_roi
         catcheye::vision_protocol
         catcheye::vision_runtime
         catcheye::vision_transport
+        cubeye::sdk
         ${OpenCV_LIBS}
         spdlog::spdlog
 )

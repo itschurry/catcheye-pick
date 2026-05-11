@@ -1,36 +1,96 @@
-# catcheye-pick
+# CatchEye Pick
 
-`catcheye-guard`와 같은 CMake/Docker 구조로 가는 picking 앱이야.
+Raspberry Pi ARM64 환경을 대상으로 빌드하고 배포하는 picking 애플리케이션이다.
+개발 PC에서는 Docker buildx/compose로 `linux/arm64` 개발 이미지를 빌드하고, 컨테이너 안에서 ARM64 타겟 빌드를 수행한다.
+실행 대상 Raspberry Pi는 `Camera Module 3 + CubeEye + catcheye-pick` 구성을 기준으로 한다.
 
-## 구조
+## 주요 기능
 
-- `src/pick`: catcheye-pick 앱 코드
-- `third_party/catcheye-vision-sdk`: vision-sdk 서브모듈
-- `third_party/CubeEye2.0-sdk`: CubeEye 3D 카메라 SDK
-- `docker`: Raspberry Pi arm64 개발 컨테이너
+- Camera Module 3 입력 처리
+- CubeEye depth/amplitude/rgb 프레임 입력 처리
+- WebSocket viewer-only 송출
+- viewer-only 모드에서 딥러닝 검출 비활성화
+- CubeEye frame 선택 옵션
 
-CubeEye SDK는 업체 제공 압축파일을 `third_party/CubeEye2.0-sdk`에 풀어둔 상태로 사용해.
-별도 설치는 하지 않고, install 단계에서 필요한 헤더와 런타임 라이브러리만 같이 복사해.
+## 기본 포트
 
-## 개발 컨테이너
+| 기능 | 기본 포트 | 주소 |
+| --- | ---: | --- |
+| WebSocket | `8080` | `ws://<host>:8080/` |
+
+## 빠른 시작
+
+개발 PC에서:
 
 ```bash
-./update_env.sh
-docker compose -f docker/docker-compose.dev.yml up -d --build
-docker compose -f docker/docker-compose.dev.yml exec catcheye-pick-dev bash
+# x86_64 PC에서 arm64 컨테이너를 빌드/실행할 때 한 번만 필요하다.
+docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+docker compose -f docker/docker-compose.dev.yml build
+docker compose -f docker/docker-compose.dev.yml run --rm catcheye-pick-dev bash
+
+cmake -S /home/user/catcheye-pick -B /home/user/catcheye-pick/build/release -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build /home/user/catcheye-pick/build/release -j$(nproc)
+cmake --install /home/user/catcheye-pick/build/release --prefix /home/user/catcheye-pick/install/release
+
+rsync -av /home/user/catcheye-pick/install/release/ user@arm-device:/opt/catcheye-pick/
 ```
 
-## 빌드
+ARM 장비에서:
 
 ```bash
-cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release
+cd /opt/catcheye-pick
+./bin/catcheye-pick --viewer-only --ws
 ```
 
-## 실행
+## 빌드/배포 개요
+
+- Docker 이미지는 `linux/arm64` 플랫폼으로 빌드한다.
+- 개발 PC에서는 QEMU/binfmt 기반 arm64 컨테이너 안에서 앱을 빌드한다.
+- `cmake --install` 결과물을 Raspberry Pi의 `/opt/catcheye-pick/` 아래로 복사한다.
+- 사용자는 `bin/catcheye-pick`을 실행한다.
+- `bin/catcheye-pick`은 실행 진입점 역할을 하는 래퍼 스크립트다.
+- `bin/catcheye-pick`은 필요한 라이브러리 경로를 설정한 뒤 실제 바이너리 `bin/catcheye-pick-bin`을 실행한다.
+- `bin/catcheye-pick-bin`은 내부용 실행 파일이므로 직접 실행하지 않는다.
+
+## 실행 옵션
 
 ```bash
-./build/release/catcheye-pick-bin --help
-./build/release/catcheye-pick-bin --version
-./build/release/catcheye-pick-bin --list-cubeye
+./bin/catcheye-pick [옵션]
+```
+
+- `--help`: 도움말을 출력한다.
+- `--version`: CubeEye SDK 버전을 출력한다.
+- `--list-cubeye`: 연결된 CubeEye camera source를 출력한다.
+- `--viewer-only`: Camera Module 3와 CubeEye를 켜고 딥러닝 검출 없이 송출한다.
+- `--ws [port]`: WebSocket 송출을 켠다. 포트를 생략하면 기본 포트 `8080`을 사용한다.
+- `--camera-pipeline <pipeline>`: Camera Module 3 GStreamer pipeline을 덮어쓴다.
+- `--cubeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
+
+## viewer-only 예시
+
+기본 실행:
+
+```bash
+./bin/catcheye-pick --viewer-only --ws
+```
+
+CubeEye depth/amplitude:
+
+```bash
+./bin/catcheye-pick --viewer-only --ws --cubeye-frames depth,amplitude
+```
+
+CubeEye depth/amplitude/rgb:
+
+```bash
+./bin/catcheye-pick --viewer-only --ws --cubeye-frames depth,amplitude,rgb
+```
+
+Camera Module 3 pipeline 지정:
+
+```bash
+./bin/catcheye-pick --viewer-only --ws --camera-pipeline "libcamerasrc ! video/x-raw,width=1920,height=1080,framerate=10/1,format=NV12 ! videoflip method=rotate-180"
 ```
