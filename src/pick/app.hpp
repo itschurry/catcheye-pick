@@ -36,6 +36,7 @@ struct AppOptions {
     CameraInputMode camera_input_mode = CameraInputMode::RgbCubeEye;
     std::string camera_pipeline;
     std::string cubeeye_frames = "depth,amplitude";
+    int pointcloud_downsample = 2;
     bool camera_pipeline_set = false;
     bool cubeeye_frames_set = false;
     DetectorBackend detector_backend = DetectorBackend::Ncnn;

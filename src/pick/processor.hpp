@@ -15,10 +15,13 @@ namespace catcheye::pick {
 struct ViewerPayload {
     std::string name;
     std::string kind;
+    std::string encoding = "jpeg";
     int width = 0;
     int height = 0;
+    std::uint64_t point_count = 0;
+    int stride = 1;
     std::uint64_t source_timestamp_ms = 0;
-    std::vector<std::uint8_t> jpeg;
+    std::vector<std::uint8_t> bytes;
 };
 
 struct PickViewerFrame {

@@ -35,7 +35,8 @@ void print_usage() {
               << "  --viewer-only             Start selected camera input without detection\n"
               << "  --ws [port]               Publish viewer-only frames over WebSocket\n"
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
-              << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb\n";
+              << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud\n"
+              << "  --pointcloud-downsample <stride>  PointCloud downsample stride\n";
 }
 
 DetectorBackend parse_detector_backend(std::string_view value) {
@@ -195,6 +196,11 @@ AppOptions parse_app_options(int argc, char** argv) {
             options.cubeeye_frames = argv[++i];
             options.cubeeye_frames_set = true;
             parse_cubeeye_frames(options.cubeeye_frames);
+        } else if (arg == "--pointcloud-downsample") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--pointcloud-downsample requires a value");
+            }
+            options.pointcloud_downsample = std::stoi(argv[++i]);
         } else if (arg == "--detector") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--detector requires a value");
@@ -209,6 +215,9 @@ AppOptions parse_app_options(int argc, char** argv) {
 
     if (options.websocket_port <= 0) {
         throw std::invalid_argument("WebSocket port must be a positive integer");
+    }
+    if (options.pointcloud_downsample <= 0) {
+        throw std::invalid_argument("--pointcloud-downsample must be a positive integer");
     }
     if (options.viewer_only && options.publisher_type != PublisherType::WebSocket) {
         throw std::invalid_argument("--viewer-only requires --ws");
@@ -235,6 +244,7 @@ AppOptions parse_app_options(int argc, char** argv) {
 AppBootstrap build_app_bootstrap(const AppOptions& options) {
     AppBootstrap bootstrap;
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
+    bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
     if (uses_cubeeye(options.camera_input_mode)) {
         bootstrap.processor_config.cubeeye_frames = parse_cubeeye_frames(options.cubeeye_frames);
     }
@@ -277,7 +287,8 @@ int run_app(int argc, char** argv) {
     std::cerr << "catcheye-pick starting (mode='" << describe_runtime_mode(options) << "', publisher='"
               << publisher_name(bootstrap.publisher_type) << "'";
     if (uses_cubeeye(options.camera_input_mode)) {
-        std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'";
+        std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
+                  << ", pointcloud_downsample=" << options.pointcloud_downsample;
     }
     std::cerr << ")\n";
 

@@ -1,7 +1,9 @@
 #include "pick/processor.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cstddef>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -11,6 +13,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "CubeEyeBasicFrame.h"
+#include "CubeEyePointCloudFrame.h"
 #include "catcheye/input/pixel_format.hpp"
 
 namespace catcheye::pick {
@@ -58,6 +61,9 @@ CubeEyeFrameSpec parse_cubeeye_frame_name(const std::string& name)
     }
     if (name == "rgb") {
         return {.name = "cubeeye_rgb", .type = meere::sensor::FrameType::RGB};
+    }
+    if (name == "pointcloud") {
+        return {.name = "cubeeye_pointcloud", .type = meere::sensor::FrameType::PointCloud};
     }
     throw std::invalid_argument("unsupported CubeEye frame: " + name);
 }
@@ -137,10 +143,13 @@ ViewerPayload camera_payload(const catcheye::input::Frame& frame)
     return ViewerPayload{
         .name = "camera_module_3",
         .kind = "camera",
+        .encoding = "jpeg",
         .width = bgr.cols,
         .height = bgr.rows,
+        .point_count = 0,
+        .stride = 1,
         .source_timestamp_ms = static_cast<std::uint64_t>(frame.timestamp),
-        .jpeg = encode_jpeg(bgr),
+        .bytes = encode_jpeg(bgr),
     };
 }
 
@@ -178,8 +187,74 @@ cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     return bgr;
 }
 
-ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry)
+void append_float32_le(std::vector<std::uint8_t>& output, float value)
 {
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    output.push_back(static_cast<std::uint8_t>(bits & 0xFFU));
+    output.push_back(static_cast<std::uint8_t>((bits >> 8U) & 0xFFU));
+    output.push_back(static_cast<std::uint8_t>((bits >> 16U) & 0xFFU));
+    output.push_back(static_cast<std::uint8_t>((bits >> 24U) & 0xFFU));
+}
+
+ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample)
+{
+    if (downsample <= 0) {
+        throw std::runtime_error("pointcloud downsample must be positive");
+    }
+
+    const auto pointcloud = meere::sensor::frame_cast_pcl32f(entry.frame);
+    if (!pointcloud || !pointcloud->frameDataX() || !pointcloud->frameDataY() || !pointcloud->frameDataZ()) {
+        throw std::runtime_error("CubeEye PointCloud frame is not F32 XYZ");
+    }
+
+    const int width = pointcloud->frameWidth();
+    const int height = pointcloud->frameHeight();
+    if (width <= 0 || height <= 0) {
+        throw std::runtime_error("CubeEye PointCloud frame has invalid dimensions");
+    }
+
+    const auto* xs = pointcloud->frameDataX();
+    const auto* ys = pointcloud->frameDataY();
+    const auto* zs = pointcloud->frameDataZ();
+    const auto expected_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    if (xs->size() < expected_count || ys->size() < expected_count || zs->size() < expected_count) {
+        throw std::runtime_error("CubeEye PointCloud XYZ arrays are smaller than frame dimensions");
+    }
+
+    const auto sampled_width = (width + downsample - 1) / downsample;
+    const auto sampled_height = (height + downsample - 1) / downsample;
+    const auto point_count = static_cast<std::uint64_t>(sampled_width) * static_cast<std::uint64_t>(sampled_height);
+    std::vector<std::uint8_t> bytes;
+    bytes.reserve(static_cast<std::size_t>(point_count) * 3U * sizeof(float));
+
+    for (int y = 0; y < height; y += downsample) {
+        for (int x = 0; x < width; x += downsample) {
+            const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
+            append_float32_le(bytes, xs->at(index));
+            append_float32_le(bytes, ys->at(index));
+            append_float32_le(bytes, zs->at(index));
+        }
+    }
+
+    return ViewerPayload{
+        .name = entry.spec.name,
+        .kind = cubeeye_frame_label(entry.spec.type),
+        .encoding = "pointcloud_xyz_f32",
+        .width = width,
+        .height = height,
+        .point_count = point_count,
+        .stride = downsample,
+        .source_timestamp_ms = static_cast<std::uint64_t>(entry.frame->timestamp()),
+        .bytes = std::move(bytes),
+    };
+}
+
+ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample)
+{
+    if (entry.spec.type == meere::sensor::FrameType::PointCloud) {
+        return cubeeye_pointcloud_payload(entry, pointcloud_downsample);
+    }
+
     cv::Mat bgr;
     if (entry.spec.type == meere::sensor::FrameType::RGB) {
         if (entry.frame->frameDataType() != meere::sensor::DataType::U8) {
@@ -199,10 +274,13 @@ ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry)
     return ViewerPayload{
         .name = entry.spec.name,
         .kind = cubeeye_frame_label(entry.spec.type),
+        .encoding = "jpeg",
         .width = bgr.cols,
         .height = bgr.rows,
+        .point_count = 0,
+        .stride = 1,
         .source_timestamp_ms = static_cast<std::uint64_t>(entry.frame->timestamp()),
-        .jpeg = encode_jpeg(bgr),
+        .bytes = encode_jpeg(bgr),
     };
 }
 
@@ -245,6 +323,8 @@ std::string cubeeye_frame_label(meere::sensor::FrameType type)
         return "amplitude";
     case meere::sensor::FrameType::RGB:
         return "rgb";
+    case meere::sensor::FrameType::PointCloud:
+        return "pointcloud";
     default:
         return "unknown";
     }
@@ -274,7 +354,7 @@ PickViewerFrame PickProcessor::process_viewer_frame(
         output.payloads.push_back(camera_payload(*camera_frame));
     }
     for (const auto& frame : cubeeye_frames.frames) {
-        output.payloads.push_back(cubeeye_payload(frame));
+        output.payloads.push_back(cubeeye_payload(frame, config_.pointcloud_downsample));
     }
     return output;
 }
@@ -286,7 +366,6 @@ std::string build_viewer_metadata(const PickViewerFrame& frame)
         << "\"viewer_only\":true,"
         << "\"frame_index\":" << frame.frame_index << ','
         << "\"wall_timestamp_ms\":" << wall_clock_millis() << ','
-        << "\"payload_encoding\":\"jpeg\","
         << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
         const auto& payload = frame.payloads[i];
@@ -296,11 +375,14 @@ std::string build_viewer_metadata(const PickViewerFrame& frame)
         oss << "{"
             << "\"name\":\"" << payload.name << "\","
             << "\"kind\":\"" << payload.kind << "\","
+            << "\"encoding\":\"" << payload.encoding << "\","
             << "\"payload_index\":" << i << ','
             << "\"width\":" << payload.width << ','
             << "\"height\":" << payload.height << ','
+            << "\"point_count\":" << payload.point_count << ','
+            << "\"stride\":" << payload.stride << ','
             << "\"source_timestamp_ms\":" << payload.source_timestamp_ms << ','
-            << "\"payload_size\":" << payload.jpeg.size()
+            << "\"payload_size\":" << payload.bytes.size()
             << "}";
     }
     oss << "]}";
@@ -312,7 +394,7 @@ std::vector<std::span<const std::uint8_t>> viewer_payload_spans(const PickViewer
     std::vector<std::span<const std::uint8_t>> spans;
     spans.reserve(frame.payloads.size());
     for (const auto& payload : frame.payloads) {
-        spans.emplace_back(payload.jpeg.data(), payload.jpeg.size());
+        spans.emplace_back(payload.bytes.data(), payload.bytes.size());
     }
     return spans;
 }
