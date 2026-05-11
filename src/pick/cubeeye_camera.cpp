@@ -1,4 +1,4 @@
-#include "pick/cubeye_camera.hpp"
+#include "pick/cubeeye_camera.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -8,7 +8,7 @@
 namespace catcheye::pick {
 namespace {
 
-constexpr int CUBEYE_FRAME_WAIT_MS = 5000;
+constexpr int CUBEEYE_FRAME_WAIT_MS = 5000;
 
 } // namespace
 
@@ -17,7 +17,7 @@ CubeEyeCameraSession::CaptureSink::CaptureSink(std::vector<CubeEyeFrameSpec> spe
 
 std::string CubeEyeCameraSession::CaptureSink::name() const
 {
-    return "catcheye-pick-cubeye";
+    return "catcheye-pick-cubeeye";
 }
 
 void CubeEyeCameraSession::CaptureSink::onCubeEyeCameraState(
@@ -52,7 +52,7 @@ void CubeEyeCameraSession::CaptureSink::onCubeEyeFrameList(
         const auto copied_frame = meere::sensor::copy_frame(frame);
         if (!copied_frame) {
             std::lock_guard<std::mutex> lock(mutex_);
-            error_ = "failed to copy CubeEye " + cubeye_frame_label(spec.type) + " frame";
+            error_ = "failed to copy CubeEye " + cubeeye_frame_label(spec.type) + " frame";
             cv_.notify_all();
             return;
         }
@@ -72,7 +72,7 @@ void CubeEyeCameraSession::CaptureSink::onCubeEyeFrameList(
 CubeEyeFrameSet CubeEyeCameraSession::CaptureSink::wait_for_frames(std::uint64_t last_sequence)
 {
     std::unique_lock<std::mutex> lock(mutex_);
-    const auto ready = cv_.wait_for(lock, std::chrono::milliseconds(CUBEYE_FRAME_WAIT_MS), [&] {
+    const auto ready = cv_.wait_for(lock, std::chrono::milliseconds(CUBEEYE_FRAME_WAIT_MS), [&] {
         return sequence_ != last_sequence || error_.has_value();
     });
     if (!ready) {
@@ -117,7 +117,7 @@ void CubeEyeCameraSession::open()
     if (camera_->prepare() != meere::sensor::result::success) {
         throw std::runtime_error("failed to prepare CubeEye camera");
     }
-    if (camera_->run(cubeye_frame_mask(specs_)) != meere::sensor::result::success) {
+    if (camera_->run(cubeeye_frame_mask(specs_)) != meere::sensor::result::success) {
         throw std::runtime_error("failed to run CubeEye camera");
     }
 }
@@ -139,7 +139,7 @@ void CubeEyeCameraSession::close()
     camera_.reset();
 }
 
-int list_cubeye_sources()
+int list_cubeeye_sources()
 {
     const auto sources = meere::sensor::search_camera_source();
     if (!sources || sources->size() == 0) {

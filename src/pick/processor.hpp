@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "catcheye/input/frame.hpp"
-#include "pick/cubeye_camera.hpp"
+#include "pick/cubeeye_camera.hpp"
 #include "pick/processor_config.hpp"
 
 namespace catcheye::pick {
@@ -32,7 +32,7 @@ class PickProcessor final {
     bool initialize();
     PickViewerFrame process_viewer_frame(
         const catcheye::input::Frame& camera_frame,
-        const CubeEyeFrameSet& cubeye_frames,
+        const CubeEyeFrameSet& cubeeye_frames,
         std::uint64_t frame_index) const;
 
   private:

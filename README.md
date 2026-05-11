@@ -63,11 +63,11 @@ cd /opt/catcheye-pick
 
 - `--help`: 도움말을 출력한다.
 - `--version`: CubeEye SDK 버전을 출력한다.
-- `--list-cubeye`: 연결된 CubeEye camera source를 출력한다.
+- `--list-cubeeye`: 연결된 CubeEye camera source를 출력한다.
 - `--viewer-only`: Camera Module 3와 CubeEye를 켜고 딥러닝 검출 없이 송출한다.
 - `--ws [port]`: WebSocket 송출을 켠다. 포트를 생략하면 기본 포트 `8080`을 사용한다.
 - `--camera-pipeline <pipeline>`: Camera Module 3 GStreamer pipeline을 덮어쓴다.
-- `--cubeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
+- `--cubeeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
 
 ## viewer-only 예시
 
@@ -80,13 +80,13 @@ cd /opt/catcheye-pick
 CubeEye depth/amplitude:
 
 ```bash
-./bin/catcheye-pick --viewer-only --ws --cubeye-frames depth,amplitude
+./bin/catcheye-pick --viewer-only --ws --cubeeye-frames depth,amplitude
 ```
 
 CubeEye depth/amplitude/rgb:
 
 ```bash
-./bin/catcheye-pick --viewer-only --ws --cubeye-frames depth,amplitude,rgb
+./bin/catcheye-pick --viewer-only --ws --cubeeye-frames depth,amplitude,rgb
 ```
 
 Camera Module 3 pipeline 지정:

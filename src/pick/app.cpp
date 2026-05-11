@@ -12,7 +12,7 @@
 #include "CubeEyeSource.h"
 #include "catcheye/input/frame_source.hpp"
 #include "catcheye/transport/websocket_publisher.hpp"
-#include "pick/cubeye_camera.hpp"
+#include "pick/cubeeye_camera.hpp"
 #include "pick/processor.hpp"
 
 namespace catcheye::pick {
@@ -28,12 +28,12 @@ void print_usage() {
               << "Options:\n"
               << "  --help                    Show this help\n"
               << "  --version                 Show CubeEye SDK version\n"
-              << "  --list-cubeye             List connected CubeEye camera sources\n"
+              << "  --list-cubeeye             List connected CubeEye camera sources\n"
               << "  --detector <name>         Detector backend: ncnn | hailo\n"
               << "  --viewer-only             Start Camera Module 3 and CubeEye without detection\n"
               << "  --ws [port]               Publish viewer-only frames over WebSocket\n"
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
-              << "  --cubeye-frames <list>    CubeEye frames: depth, amplitude, rgb\n";
+              << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb\n";
 }
 
 DetectorBackend parse_detector_backend(std::string_view value) {
@@ -68,8 +68,8 @@ int run_viewer_only(AppBootstrap bootstrap) {
         throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
     }
 
-    CubeEyeCameraSession cubeye(bootstrap.processor_config.cubeye_frames);
-    cubeye.open();
+    CubeEyeCameraSession cubeeye(bootstrap.processor_config.cubeeye_frames);
+    cubeeye.open();
 
     PickProcessor processor(std::move(bootstrap.processor_config));
     if (!processor.initialize()) {
@@ -93,8 +93,8 @@ int run_viewer_only(AppBootstrap bootstrap) {
         }
 
         ++frame_index;
-        const CubeEyeFrameSet cubeye_frames = cubeye.read();
-        const PickViewerFrame viewer_frame = processor.process_viewer_frame(camera_frame, cubeye_frames, frame_index);
+        const CubeEyeFrameSet cubeeye_frames = cubeeye.read();
+        const PickViewerFrame viewer_frame = processor.process_viewer_frame(camera_frame, cubeeye_frames, frame_index);
         const std::string metadata = build_viewer_metadata(viewer_frame);
         const auto payloads = viewer_payload_spans(viewer_frame);
         websocket.publish_payloads(metadata, payloads);
@@ -116,8 +116,8 @@ AppOptions parse_app_options(int argc, char** argv) {
             options.show_help = true;
         } else if (arg == "--version") {
             options.show_version = true;
-        } else if (arg == "--list-cubeye") {
-            options.list_cubeye_sources = true;
+        } else if (arg == "--list-cubeeye") {
+            options.list_cubeeye_sources = true;
         } else if (arg == "--viewer-only") {
             options.viewer_only = true;
         } else if (arg == "--ws") {
@@ -133,12 +133,12 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--camera-pipeline requires a value");
             }
             options.camera_pipeline = argv[++i];
-        } else if (arg == "--cubeye-frames") {
+        } else if (arg == "--cubeeye-frames") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--cubeye-frames requires a value");
+                throw std::invalid_argument("--cubeeye-frames requires a value");
             }
-            options.cubeye_frames = argv[++i];
-            parse_cubeye_frames(options.cubeye_frames);
+            options.cubeeye_frames = argv[++i];
+            parse_cubeeye_frames(options.cubeeye_frames);
         } else if (arg == "--detector") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--detector requires a value");
@@ -173,7 +173,7 @@ AppOptions parse_app_options(int argc, char** argv) {
 AppBootstrap build_app_bootstrap(const AppOptions& options) {
     AppBootstrap bootstrap;
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
-    bootstrap.processor_config.cubeye_frames = parse_cubeye_frames(options.cubeye_frames);
+    bootstrap.processor_config.cubeeye_frames = parse_cubeeye_frames(options.cubeeye_frames);
     bootstrap.publisher_type = options.publisher_type;
     bootstrap.websocket_publisher_config.port = options.websocket_port;
 
@@ -203,13 +203,13 @@ int run_app(int argc, char** argv) {
         return 0;
     }
 
-    if (options.list_cubeye_sources) {
-        return list_cubeye_sources();
+    if (options.list_cubeeye_sources) {
+        return list_cubeeye_sources();
     }
 
     AppBootstrap bootstrap = build_app_bootstrap(options);
     std::cerr << "catcheye-pick starting (mode='" << describe_runtime_mode(options) << "', publisher='"
-              << publisher_name(bootstrap.publisher_type) << "', cubeye_frames='" << options.cubeye_frames << "')\n";
+              << publisher_name(bootstrap.publisher_type) << "', cubeeye_frames='" << options.cubeeye_frames << "')\n";
 
     if (options.viewer_only) {
         return run_viewer_only(std::move(bootstrap));

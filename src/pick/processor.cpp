@@ -31,7 +31,7 @@ std::vector<std::string> split_csv(std::string_view value)
     for (const char ch : value) {
         if (ch == ',') {
             if (current.empty()) {
-                throw std::invalid_argument("--cubeye-frames contains an empty item");
+                throw std::invalid_argument("--cubeeye-frames contains an empty item");
             }
             items.push_back(current);
             current.clear();
@@ -42,22 +42,22 @@ std::vector<std::string> split_csv(std::string_view value)
         }
     }
     if (current.empty()) {
-        throw std::invalid_argument("--cubeye-frames contains an empty item");
+        throw std::invalid_argument("--cubeeye-frames contains an empty item");
     }
     items.push_back(current);
     return items;
 }
 
-CubeEyeFrameSpec parse_cubeye_frame_name(const std::string& name)
+CubeEyeFrameSpec parse_cubeeye_frame_name(const std::string& name)
 {
     if (name == "depth") {
-        return {.name = "cubeye_depth", .type = meere::sensor::FrameType::Depth};
+        return {.name = "cubeeye_depth", .type = meere::sensor::FrameType::Depth};
     }
     if (name == "amplitude") {
-        return {.name = "cubeye_amplitude", .type = meere::sensor::FrameType::Amplitude};
+        return {.name = "cubeeye_amplitude", .type = meere::sensor::FrameType::Amplitude};
     }
     if (name == "rgb") {
-        return {.name = "cubeye_rgb", .type = meere::sensor::FrameType::RGB};
+        return {.name = "cubeeye_rgb", .type = meere::sensor::FrameType::RGB};
     }
     throw std::invalid_argument("unsupported CubeEye frame: " + name);
 }
@@ -178,7 +178,7 @@ cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     return bgr;
 }
 
-ViewerPayload cubeye_payload(const CubeEyeFrameEntry& entry)
+ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry)
 {
     cv::Mat bgr;
     if (entry.spec.type == meere::sensor::FrameType::RGB) {
@@ -188,17 +188,17 @@ ViewerPayload cubeye_payload(const CubeEyeFrameEntry& entry)
         bgr = rgb_frame_to_bgr(entry.frame);
     } else {
         if (entry.frame->frameDataType() != meere::sensor::DataType::U16) {
-            throw std::runtime_error("CubeEye " + cubeye_frame_label(entry.spec.type) + " frame is not U16");
+            throw std::runtime_error("CubeEye " + cubeeye_frame_label(entry.spec.type) + " frame is not U16");
         }
         bgr = normalize_u16_frame_to_bgr(entry.frame);
     }
     if (bgr.empty()) {
-        throw std::runtime_error("failed to convert CubeEye " + cubeye_frame_label(entry.spec.type) + " frame");
+        throw std::runtime_error("failed to convert CubeEye " + cubeeye_frame_label(entry.spec.type) + " frame");
     }
 
     return ViewerPayload{
         .name = entry.spec.name,
-        .kind = cubeye_frame_label(entry.spec.type),
+        .kind = cubeeye_frame_label(entry.spec.type),
         .width = bgr.cols,
         .height = bgr.rows,
         .source_timestamp_ms = static_cast<std::uint64_t>(entry.frame->timestamp()),
@@ -208,11 +208,11 @@ ViewerPayload cubeye_payload(const CubeEyeFrameEntry& entry)
 
 } // namespace
 
-std::vector<CubeEyeFrameSpec> parse_cubeye_frames(std::string_view value)
+std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value)
 {
     std::vector<CubeEyeFrameSpec> specs;
     for (const std::string& item : split_csv(value)) {
-        const CubeEyeFrameSpec spec = parse_cubeye_frame_name(item);
+        const CubeEyeFrameSpec spec = parse_cubeeye_frame_name(item);
         const auto duplicate = std::find_if(specs.begin(), specs.end(), [&](const CubeEyeFrameSpec& existing) {
             return existing.type == spec.type;
         });
@@ -222,12 +222,12 @@ std::vector<CubeEyeFrameSpec> parse_cubeye_frames(std::string_view value)
         specs.push_back(spec);
     }
     if (specs.empty()) {
-        throw std::invalid_argument("--cubeye-frames requires at least one frame");
+        throw std::invalid_argument("--cubeeye-frames requires at least one frame");
     }
     return specs;
 }
 
-int cubeye_frame_mask(std::span<const CubeEyeFrameSpec> specs)
+int cubeeye_frame_mask(std::span<const CubeEyeFrameSpec> specs)
 {
     int mask = 0;
     for (const auto& spec : specs) {
@@ -236,7 +236,7 @@ int cubeye_frame_mask(std::span<const CubeEyeFrameSpec> specs)
     return mask;
 }
 
-std::string cubeye_frame_label(meere::sensor::FrameType type)
+std::string cubeeye_frame_label(meere::sensor::FrameType type)
 {
     switch (type) {
     case meere::sensor::FrameType::Depth:
@@ -260,7 +260,7 @@ bool PickProcessor::initialize()
 
 PickViewerFrame PickProcessor::process_viewer_frame(
     const catcheye::input::Frame& camera_frame,
-    const CubeEyeFrameSet& cubeye_frames,
+    const CubeEyeFrameSet& cubeeye_frames,
     std::uint64_t frame_index) const
 {
     if (config_.detection_enabled) {
@@ -269,10 +269,10 @@ PickViewerFrame PickProcessor::process_viewer_frame(
 
     PickViewerFrame output;
     output.frame_index = frame_index;
-    output.payloads.reserve(1U + cubeye_frames.frames.size());
+    output.payloads.reserve(1U + cubeeye_frames.frames.size());
     output.payloads.push_back(camera_payload(camera_frame));
-    for (const auto& frame : cubeye_frames.frames) {
-        output.payloads.push_back(cubeye_payload(frame));
+    for (const auto& frame : cubeeye_frames.frames) {
+        output.payloads.push_back(cubeeye_payload(frame));
     }
     return output;
 }

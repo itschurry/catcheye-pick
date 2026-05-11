@@ -63,6 +63,6 @@ class CubeEyeCameraSession final {
     meere::sensor::sptr_camera camera_;
 };
 
-int list_cubeye_sources();
+int list_cubeeye_sources();
 
 } // namespace catcheye::pick

@@ -23,12 +23,12 @@ enum class DetectorBackend {
 struct AppOptions {
     bool show_help = false;
     bool show_version = false;
-    bool list_cubeye_sources = false;
+    bool list_cubeeye_sources = false;
     bool viewer_only = false;
     PublisherType publisher_type = PublisherType::None;
     int websocket_port = 8080;
     std::string camera_pipeline;
-    std::string cubeye_frames = "depth,amplitude";
+    std::string cubeeye_frames = "depth,amplitude";
     DetectorBackend detector_backend = DetectorBackend::Ncnn;
     std::vector<std::string> positional_args;
 };

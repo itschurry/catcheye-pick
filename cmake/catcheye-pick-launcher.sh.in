@@ -4,10 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
 LIB_DIR="${APP_ROOT}/lib"
-CUBEYE_LIB_DIR="${APP_ROOT}/lib"
+CUBEEYE_LIB_DIR="${APP_ROOT}/lib"
 APP_BIN="${SCRIPT_DIR}/catcheye-pick-bin"
 
-export LD_LIBRARY_PATH="${LIB_DIR}:${CUBEYE_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${LIB_DIR}:${CUBEEYE_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export GST_PLUGIN_PATH="/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0${GST_PLUGIN_PATH:+:${GST_PLUGIN_PATH}}"
 
 exec "${APP_BIN}" "$@"
