@@ -3,12 +3,14 @@
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace catcheye::pick {
 namespace {
 
 constexpr int CUBEEYE_FRAME_WAIT_MS = 5000;
+constexpr std::string_view CUBEEYE_FRAMERATE_PROPERTY = "framerate";
 
 } // namespace
 
@@ -90,8 +92,9 @@ std::uint64_t CubeEyeCameraSession::CaptureSink::sequence() const
     return sequence_;
 }
 
-CubeEyeCameraSession::CubeEyeCameraSession(std::vector<CubeEyeFrameSpec> specs)
+CubeEyeCameraSession::CubeEyeCameraSession(std::vector<CubeEyeFrameSpec> specs, int camera_fps)
     : specs_(std::move(specs)),
+      camera_fps_(camera_fps),
       capture_(specs_) {}
 
 CubeEyeCameraSession::~CubeEyeCameraSession()
@@ -119,6 +122,15 @@ void CubeEyeCameraSession::open()
     }
     if (camera_->run(cubeeye_frame_mask(specs_)) != meere::sensor::result::success) {
         throw std::runtime_error("failed to run CubeEye camera");
+    }
+    if (camera_fps_ > 0) {
+        const auto property = meere::sensor::make_property_8u(
+            std::string(CUBEEYE_FRAMERATE_PROPERTY),
+            static_cast<meere::sensor::int8u>(camera_fps_));
+        if (!property || camera_->setProperty(property) != meere::sensor::result::success) {
+            throw std::runtime_error("failed to set CubeEye framerate");
+        }
+        std::cerr << "CubeEye framerate set to " << camera_fps_ << " fps\n";
     }
 }
 

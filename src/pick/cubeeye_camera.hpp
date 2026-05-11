@@ -26,7 +26,7 @@ struct CubeEyeFrameSet {
 
 class CubeEyeCameraSession final {
   public:
-    explicit CubeEyeCameraSession(std::vector<CubeEyeFrameSpec> specs);
+    explicit CubeEyeCameraSession(std::vector<CubeEyeFrameSpec> specs, int camera_fps = 0);
     ~CubeEyeCameraSession();
 
     CubeEyeCameraSession(const CubeEyeCameraSession&) = delete;
@@ -59,6 +59,7 @@ class CubeEyeCameraSession final {
     };
 
     std::vector<CubeEyeFrameSpec> specs_;
+    int camera_fps_ = 0;
     CaptureSink capture_;
     meere::sensor::sptr_camera camera_;
 };

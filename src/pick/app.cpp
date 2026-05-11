@@ -1,13 +1,19 @@
 #include "pick/app.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <exception>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "CubeEyeCamera.h"
 #include "CubeEyeSource.h"
@@ -35,8 +41,9 @@ void print_usage() {
               << "  --viewer-only             Start selected camera input without detection\n"
               << "  --ws [port]               Publish viewer-only frames over WebSocket\n"
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
-              << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud\n"
-              << "  --pointcloud-downsample <stride>  PointCloud downsample stride\n";
+              << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
+              << "  --cubeeye-camera-fps <fps>  CubeEye S111D camera framerate: 7 | 15 | 30\n"
+              << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
 }
 
 DetectorBackend parse_detector_backend(std::string_view value) {
@@ -94,6 +101,113 @@ const char* publisher_name(PublisherType type) {
     return "unknown";
 }
 
+bool is_supported_cubeeye_camera_fps(int fps)
+{
+    return fps == 7 || fps == 15 || fps == 30;
+}
+
+class LatestViewerFramePublisher {
+private:
+    struct ViewerPacket {
+        std::string source_key;
+        std::string metadata;
+        PickViewerFrame frame;
+    };
+
+public:
+    explicit LatestViewerFramePublisher(catcheye::transport::WebSocketPublisher& websocket)
+        : websocket_(websocket)
+        , thread_(&LatestViewerFramePublisher::run, this)
+    {}
+
+    ~LatestViewerFramePublisher()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        condition_.notify_one();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    void publish(std::string source_key, PickViewerFrame frame)
+    {
+        throw_if_failed();
+        ViewerPacket packet{
+            .source_key = std::move(source_key),
+            .metadata = build_viewer_metadata(frame),
+            .frame = std::move(frame),
+        };
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto existing = std::find_if(pending_packets_.begin(), pending_packets_.end(), [&](const ViewerPacket& pending) {
+                return pending.source_key == packet.source_key;
+            });
+            if (existing == pending_packets_.end()) {
+                pending_packets_.push_back(std::move(packet));
+            } else {
+                *existing = std::move(packet);
+            }
+        }
+        condition_.notify_one();
+    }
+
+    void throw_if_failed()
+    {
+        std::exception_ptr error;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            error = error_;
+        }
+        if (error) {
+            std::rethrow_exception(error);
+        }
+    }
+
+private:
+    void run()
+    {
+        try {
+            while (true) {
+                ViewerPacket packet;
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    condition_.wait(lock, [&] {
+                        return stopping_ || !pending_packets_.empty();
+                    });
+                    if (stopping_ && pending_packets_.empty()) {
+                        return;
+                    }
+                    packet = std::move(pending_packets_.front());
+                    pending_packets_.erase(pending_packets_.begin());
+                }
+
+                const auto payloads = viewer_payload_spans(packet.frame);
+                websocket_.publish_payloads(packet.metadata, payloads);
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            error_ = std::current_exception();
+        }
+    }
+
+    catcheye::transport::WebSocketPublisher& websocket_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::vector<ViewerPacket> pending_packets_;
+    bool stopping_{false};
+    std::exception_ptr error_;
+};
+
+std::exception_ptr worker_error_snapshot(std::mutex& error_mutex, const std::exception_ptr& worker_error)
+{
+    std::lock_guard<std::mutex> lock(error_mutex);
+    return worker_error;
+}
+
 std::string describe_runtime_mode(const AppOptions& options) {
     const char* processing_name = options.viewer_only ? "viewer only" : "pick detection";
     const char* output_name = options.publisher_type == PublisherType::WebSocket ? "websocket output" : "local output";
@@ -110,7 +224,7 @@ int run_viewer_only(AppBootstrap bootstrap) {
 
     std::optional<CubeEyeCameraSession> cubeeye;
     if (cubeeye_enabled) {
-        cubeeye.emplace(bootstrap.processor_config.cubeeye_frames);
+        cubeeye.emplace(bootstrap.processor_config.cubeeye_frames, bootstrap.cubeeye_camera_fps);
         cubeeye->open();
     }
 
@@ -123,32 +237,89 @@ int run_viewer_only(AppBootstrap bootstrap) {
     if (!websocket.start()) {
         throw std::runtime_error("failed to start WebSocket publisher");
     }
+    LatestViewerFramePublisher async_publisher(websocket);
 
-    std::uint64_t frame_index = 0;
-    while (true) {
-        std::optional<catcheye::input::Frame> camera_frame;
-        if (rgb_camera_enabled) {
-            catcheye::input::Frame frame;
-            const auto read_status = bootstrap.camera_source->read(frame);
-            if (read_status == catcheye::input::FrameReadStatus::Error) {
-                throw std::runtime_error("Camera Module 3 frame read failed");
+    std::atomic_bool running{true};
+    std::atomic_uint64_t frame_index{0};
+    std::mutex worker_error_mutex;
+    std::exception_ptr worker_error;
+    auto capture_worker_error = [&] {
+        {
+            std::lock_guard<std::mutex> lock(worker_error_mutex);
+            if (!worker_error) {
+                worker_error = std::current_exception();
             }
-            if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
-                throw std::runtime_error("Camera Module 3 stream ended");
-            }
-            camera_frame = std::move(frame);
         }
+        running = false;
+    };
 
-        ++frame_index;
-        CubeEyeFrameSet cubeeye_frames;
-        if (cubeeye_enabled) {
-            cubeeye_frames = cubeeye->read();
+    std::vector<std::thread> workers;
+    if (rgb_camera_enabled) {
+        workers.emplace_back([&] {
+            try {
+                while (running) {
+                    catcheye::input::Frame frame;
+                    const auto read_status = bootstrap.camera_source->read(frame);
+                    if (read_status == catcheye::input::FrameReadStatus::Error) {
+                        throw std::runtime_error("Camera Module 3 frame read failed");
+                    }
+                    if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
+                        throw std::runtime_error("Camera Module 3 stream ended");
+                    }
+
+                    PickViewerFrame viewer_frame =
+                        processor.process_viewer_frame(std::optional<catcheye::input::Frame>{std::move(frame)}, {}, ++frame_index);
+                    async_publisher.publish("camera", std::move(viewer_frame));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
+                }
+            } catch (...) {
+                capture_worker_error();
+            }
+        });
+    }
+
+    if (cubeeye_enabled) {
+        workers.emplace_back([&] {
+            try {
+                while (running) {
+                    CubeEyeFrameSet cubeeye_frames = cubeeye->read();
+                    PickViewerFrame viewer_frame = processor.process_viewer_frame(std::nullopt, cubeeye_frames, ++frame_index);
+                    async_publisher.publish("cubeeye", std::move(viewer_frame));
+                }
+            } catch (...) {
+                capture_worker_error();
+            }
+        });
+    }
+
+    while (running) {
+        try {
+            async_publisher.throw_if_failed();
+        } catch (...) {
+            {
+                std::lock_guard<std::mutex> lock(worker_error_mutex);
+                if (!worker_error) {
+                    worker_error = std::current_exception();
+                }
+            }
+            running = false;
+            break;
         }
-        const PickViewerFrame viewer_frame = processor.process_viewer_frame(camera_frame, cubeeye_frames, frame_index);
-        const std::string metadata = build_viewer_metadata(viewer_frame);
-        const auto payloads = viewer_payload_spans(viewer_frame);
-        websocket.publish_payloads(metadata, payloads);
-        std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
+        if (worker_error_snapshot(worker_error_mutex, worker_error)) {
+            running = false;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    for (auto& worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+    async_publisher.throw_if_failed();
+    if (const auto error = worker_error_snapshot(worker_error_mutex, worker_error)) {
+        std::rethrow_exception(error);
     }
 
     return 0;
@@ -201,6 +372,12 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--pointcloud-downsample requires a value");
             }
             options.pointcloud_downsample = std::stoi(argv[++i]);
+        } else if (arg == "--cubeeye-camera-fps") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--cubeeye-camera-fps requires a value");
+            }
+            options.cubeeye_camera_fps = std::stoi(argv[++i]);
+            options.cubeeye_camera_fps_set = true;
         } else if (arg == "--detector") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--detector requires a value");
@@ -219,6 +396,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (options.pointcloud_downsample <= 0) {
         throw std::invalid_argument("--pointcloud-downsample must be a positive integer");
     }
+    if (options.cubeeye_camera_fps_set && !is_supported_cubeeye_camera_fps(options.cubeeye_camera_fps)) {
+        throw std::invalid_argument("--cubeeye-camera-fps supports S111D values only: 7, 15, 30");
+    }
     if (options.viewer_only && options.publisher_type != PublisherType::WebSocket) {
         throw std::invalid_argument("--viewer-only requires --ws");
     }
@@ -234,6 +414,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (!uses_cubeeye(options.camera_input_mode) && options.cubeeye_frames_set) {
         throw std::invalid_argument("--cubeeye-frames requires CubeEye input");
     }
+    if (!uses_cubeeye(options.camera_input_mode) && options.cubeeye_camera_fps_set) {
+        throw std::invalid_argument("--cubeeye-camera-fps requires CubeEye input");
+    }
     if (options.viewer_only && !options.positional_args.empty()) {
         throw std::invalid_argument("positional arguments are not used with --viewer-only");
     }
@@ -245,6 +428,7 @@ AppBootstrap build_app_bootstrap(const AppOptions& options) {
     AppBootstrap bootstrap;
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
+    bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
     if (uses_cubeeye(options.camera_input_mode)) {
         bootstrap.processor_config.cubeeye_frames = parse_cubeeye_frames(options.cubeeye_frames);
     }
@@ -289,6 +473,9 @@ int run_app(int argc, char** argv) {
     if (uses_cubeeye(options.camera_input_mode)) {
         std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
                   << ", pointcloud_downsample=" << options.pointcloud_downsample;
+        if (options.cubeeye_camera_fps_set) {
+            std::cerr << ", cubeeye_camera_fps=" << options.cubeeye_camera_fps;
+        }
     }
     std::cerr << ")\n";
 

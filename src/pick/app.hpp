@@ -36,9 +36,11 @@ struct AppOptions {
     CameraInputMode camera_input_mode = CameraInputMode::RgbCubeEye;
     std::string camera_pipeline;
     std::string cubeeye_frames = "depth,amplitude";
-    int pointcloud_downsample = 2;
+    int cubeeye_camera_fps = 0;
+    int pointcloud_downsample = 4;
     bool camera_pipeline_set = false;
     bool cubeeye_frames_set = false;
+    bool cubeeye_camera_fps_set = false;
     DetectorBackend detector_backend = DetectorBackend::Ncnn;
     std::vector<std::string> positional_args;
 };
@@ -48,6 +50,7 @@ struct AppBootstrap {
     PublisherType publisher_type = PublisherType::None;
     catcheye::transport::WebSocketPublisherConfig websocket_publisher_config;
     std::unique_ptr<catcheye::input::FrameSource> camera_source;
+    int cubeeye_camera_fps = 0;
 };
 
 AppOptions parse_app_options(int argc, char** argv);

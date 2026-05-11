@@ -4,6 +4,7 @@
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -187,13 +188,20 @@ cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     return bgr;
 }
 
-void append_float32_le(std::vector<std::uint8_t>& output, float value)
+void write_float32_le(std::uint8_t*& output, float value)
 {
+    if constexpr (std::endian::native == std::endian::little) {
+        std::memcpy(output, &value, sizeof(value));
+        output += sizeof(value);
+        return;
+    }
+
     const auto bits = std::bit_cast<std::uint32_t>(value);
-    output.push_back(static_cast<std::uint8_t>(bits & 0xFFU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 8U) & 0xFFU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 16U) & 0xFFU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 24U) & 0xFFU));
+    output[0] = static_cast<std::uint8_t>(bits & 0xFFU);
+    output[1] = static_cast<std::uint8_t>((bits >> 8U) & 0xFFU);
+    output[2] = static_cast<std::uint8_t>((bits >> 16U) & 0xFFU);
+    output[3] = static_cast<std::uint8_t>((bits >> 24U) & 0xFFU);
+    output += sizeof(value);
 }
 
 ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample)
@@ -225,14 +233,18 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
     const auto sampled_height = (height + downsample - 1) / downsample;
     const auto point_count = static_cast<std::uint64_t>(sampled_width) * static_cast<std::uint64_t>(sampled_height);
     std::vector<std::uint8_t> bytes;
-    bytes.reserve(static_cast<std::size_t>(point_count) * 3U * sizeof(float));
+    bytes.resize(static_cast<std::size_t>(point_count) * 3U * sizeof(float));
+    std::uint8_t* output = bytes.data();
+    const auto* x_data = xs->data();
+    const auto* y_data = ys->data();
+    const auto* z_data = zs->data();
 
     for (int y = 0; y < height; y += downsample) {
         for (int x = 0; x < width; x += downsample) {
             const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
-            append_float32_le(bytes, xs->at(index));
-            append_float32_le(bytes, ys->at(index));
-            append_float32_le(bytes, zs->at(index));
+            write_float32_le(output, x_data[index]);
+            write_float32_le(output, y_data[index]);
+            write_float32_le(output, z_data[index]);
         }
     }
 
@@ -289,6 +301,8 @@ ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_dow
 std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value)
 {
     std::vector<CubeEyeFrameSpec> specs;
+    bool has_depth = false;
+    bool has_pointcloud = false;
     for (const std::string& item : split_csv(value)) {
         const CubeEyeFrameSpec spec = parse_cubeeye_frame_name(item);
         const auto duplicate = std::find_if(specs.begin(), specs.end(), [&](const CubeEyeFrameSpec& existing) {
@@ -297,10 +311,15 @@ std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value)
         if (duplicate != specs.end()) {
             throw std::invalid_argument("duplicate CubeEye frame: " + item);
         }
+        has_depth = has_depth || spec.type == meere::sensor::FrameType::Depth;
+        has_pointcloud = has_pointcloud || spec.type == meere::sensor::FrameType::PointCloud;
         specs.push_back(spec);
     }
     if (specs.empty()) {
         throw std::invalid_argument("--cubeeye-frames requires at least one frame");
+    }
+    if (has_depth && has_pointcloud) {
+        throw std::invalid_argument("CubeEye depth and pointcloud cannot be selected together");
     }
     return specs;
 }

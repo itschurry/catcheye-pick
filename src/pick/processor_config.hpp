@@ -17,7 +17,7 @@ struct CubeEyeFrameSpec {
 struct PickProcessorConfig {
     bool detection_enabled = true;
     std::vector<CubeEyeFrameSpec> cubeeye_frames;
-    int pointcloud_downsample = 2;
+    int pointcloud_downsample = 4;
 };
 
 std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value);
