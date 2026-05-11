@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -31,7 +32,7 @@ class PickProcessor final {
 
     bool initialize();
     PickViewerFrame process_viewer_frame(
-        const catcheye::input::Frame& camera_frame,
+        const std::optional<catcheye::input::Frame>& camera_frame,
         const CubeEyeFrameSet& cubeeye_frames,
         std::uint64_t frame_index) const;
 

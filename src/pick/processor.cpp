@@ -259,7 +259,7 @@ bool PickProcessor::initialize()
 }
 
 PickViewerFrame PickProcessor::process_viewer_frame(
-    const catcheye::input::Frame& camera_frame,
+    const std::optional<catcheye::input::Frame>& camera_frame,
     const CubeEyeFrameSet& cubeeye_frames,
     std::uint64_t frame_index) const
 {
@@ -270,7 +270,9 @@ PickViewerFrame PickProcessor::process_viewer_frame(
     PickViewerFrame output;
     output.frame_index = frame_index;
     output.payloads.reserve(1U + cubeeye_frames.frames.size());
-    output.payloads.push_back(camera_payload(camera_frame));
+    if (camera_frame.has_value()) {
+        output.payloads.push_back(camera_payload(*camera_frame));
+    }
     for (const auto& frame : cubeeye_frames.frames) {
         output.payloads.push_back(cubeeye_payload(frame));
     }

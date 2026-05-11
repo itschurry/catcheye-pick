@@ -20,6 +20,12 @@ enum class DetectorBackend {
     Hailo,
 };
 
+enum class CameraInputMode {
+    RgbCubeEye,
+    RgbOnly,
+    CubeEyeOnly,
+};
+
 struct AppOptions {
     bool show_help = false;
     bool show_version = false;
@@ -27,8 +33,11 @@ struct AppOptions {
     bool viewer_only = false;
     PublisherType publisher_type = PublisherType::None;
     int websocket_port = 8080;
+    CameraInputMode camera_input_mode = CameraInputMode::RgbCubeEye;
     std::string camera_pipeline;
     std::string cubeeye_frames = "depth,amplitude";
+    bool camera_pipeline_set = false;
+    bool cubeeye_frames_set = false;
     DetectorBackend detector_backend = DetectorBackend::Ncnn;
     std::vector<std::string> positional_args;
 };
