@@ -299,6 +299,7 @@ install(DIRECTORY config
 
 install(PROGRAMS
     scripts/run-all.sh
+    scripts/run-cubeeye-detect.sh
     scripts/run-pcl.sh
     scripts/run-rgb-ncnn.sh
     scripts/run-rgb-pcl.sh
