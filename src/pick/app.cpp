@@ -460,13 +460,14 @@ int run_pick_detection(AppBootstrap bootstrap)
             if (!catcheye::visualization::build_annotated_detection_frame(frame, detections, publish_frame)) {
                 throw std::runtime_error("failed to build annotated detection frame");
             }
-            websocket->publish(
-                publish_frame,
-                catcheye::protocol::FrameMessage{
-                    .stream_name = "pick-detection",
-                    .metadata_json = build_detection_metadata(detection_frame),
-                },
-                catcheye::transport::PublishContext{.frame_index = detection_frame.frame_index});
+
+            PickViewerFrame viewer_frame = processor.process_viewer_frame(
+                std::optional<catcheye::input::Frame>{std::move(publish_frame)},
+                cubeeye_frames,
+                detection_frame.frame_index);
+            const std::string metadata = build_viewer_metadata(viewer_frame, false, &detection_frame);
+            const auto payloads = viewer_payload_spans(viewer_frame);
+            websocket->publish_payloads(metadata, payloads);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
     }

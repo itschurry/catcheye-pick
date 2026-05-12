@@ -465,10 +465,6 @@ PickViewerFrame PickProcessor::process_viewer_frame(
     const CubeEyeFrameSet& cubeeye_frames,
     std::uint64_t frame_index) const
 {
-    if (config_.detection_enabled) {
-        throw std::runtime_error("pick detection pipeline is not implemented yet");
-    }
-
     PickViewerFrame output;
     output.frame_index = frame_index;
     const RoiSnapshot roi = roi_snapshot();
@@ -487,17 +483,46 @@ PickViewerFrame PickProcessor::process_viewer_frame(
     return output;
 }
 
-std::string build_viewer_metadata(const PickViewerFrame& frame)
+void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& frame)
+{
+    oss << "\"detection_count\":" << frame.detections.size()
+        << ",\"detections\":[";
+    for (std::size_t i = 0; i < frame.detections.size(); ++i) {
+        const auto& detection = frame.detections[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"class_id\":" << detection.class_id
+            << ",\"class_name\":\"" << escape_json(detection.class_name) << "\""
+            << ",\"score\":" << detection.score
+            << ",\"box\":{\"x\":" << detection.box.x
+            << ",\"y\":" << detection.box.y
+            << ",\"width\":" << detection.box.width
+            << ",\"height\":" << detection.box.height
+            << "}}";
+    }
+    oss << "]";
+}
+
+std::string build_viewer_metadata(
+    const PickViewerFrame& frame,
+    bool viewer_only,
+    const PickDetectionFrame* detection_frame)
 {
     std::ostringstream oss;
     oss << "{\"type\":\"viewer_frame\","
-        << "\"viewer_only\":true,"
+        << "\"viewer_only\":" << (viewer_only ? "true" : "false") << ','
         << "\"frame_index\":" << frame.frame_index << ','
         << "\"wall_timestamp_ms\":" << wall_clock_millis() << ','
         << "\"roi_enabled\":" << (frame.roi_enabled ? "true" : "false") << ','
         << "\"roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.roi_config, 0) << ','
         << "\"pallet_roi_enabled\":" << (frame.pallet_roi_enabled ? "true" : "false") << ','
-        << "\"pallet_roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.pallet_roi_config, 0) << ','
+        << "\"pallet_roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.pallet_roi_config, 0) << ',';
+    if (detection_frame != nullptr) {
+        append_detection_fields(oss, *detection_frame);
+        oss << ',';
+    }
+    oss
         << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
         const auto& payload = frame.payloads[i];
@@ -524,24 +549,9 @@ std::string build_viewer_metadata(const PickViewerFrame& frame)
 std::string build_detection_metadata(const PickDetectionFrame& frame)
 {
     std::ostringstream oss;
-    oss << "{\"viewer_only\":false,"
-        << "\"detection_count\":" << frame.detections.size()
-        << ",\"detections\":[";
-    for (std::size_t i = 0; i < frame.detections.size(); ++i) {
-        const auto& detection = frame.detections[i];
-        if (i > 0) {
-            oss << ',';
-        }
-        oss << "{\"class_id\":" << detection.class_id
-            << ",\"class_name\":\"" << escape_json(detection.class_name) << "\""
-            << ",\"score\":" << detection.score
-            << ",\"box\":{\"x\":" << detection.box.x
-            << ",\"y\":" << detection.box.y
-            << ",\"width\":" << detection.box.width
-            << ",\"height\":" << detection.box.height
-            << "}}";
-    }
-    oss << "]}";
+    oss << "{\"viewer_only\":false,";
+    append_detection_fields(oss, frame);
+    oss << "}";
     return oss.str();
 }
 
