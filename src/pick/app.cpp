@@ -102,6 +102,14 @@ bool uses_cubeeye(CameraInputMode mode) {
     return mode == CameraInputMode::RgbCubeEye || mode == CameraInputMode::CubeEyeOnly;
 }
 
+bool cubeeye_frames_include(std::string_view value, meere::sensor::FrameType type)
+{
+    const std::vector<CubeEyeFrameSpec> specs = parse_cubeeye_frames(value);
+    return std::any_of(specs.begin(), specs.end(), [type](const CubeEyeFrameSpec& spec) {
+        return spec.type == type;
+    });
+}
+
 const char* publisher_name(PublisherType type) {
     switch (type) {
     case PublisherType::WebSocket:
@@ -387,20 +395,21 @@ int run_viewer_only(AppBootstrap bootstrap) {
 
 int run_pick_detection(AppBootstrap bootstrap)
 {
-    if (bootstrap.camera_source == nullptr) {
-        throw std::runtime_error("pick detection requires RGB camera input");
-    }
-
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
     std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
     const int cubeeye_camera_fps = bootstrap.cubeeye_camera_fps;
+    const bool rgb_camera_enabled = bootstrap.camera_source != nullptr;
     PickProcessor processor(std::move(bootstrap.processor_config));
     if (!processor.initialize()) {
         throw std::runtime_error("failed to initialize pick processor");
     }
 
-    if (!bootstrap.camera_source->open()) {
+    if (!rgb_camera_enabled && cubeeye_frame_specs.empty()) {
+        throw std::runtime_error("pick detection requires RGB camera or CubeEye amplitude input");
+    }
+
+    if (rgb_camera_enabled && !bootstrap.camera_source->open()) {
         throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
     }
 
@@ -430,21 +439,28 @@ int run_pick_detection(AppBootstrap bootstrap)
 
     std::uint64_t frame_index = 0;
     while (true) {
-        catcheye::input::Frame frame;
-        const auto read_status = bootstrap.camera_source->read(frame);
-        if (read_status == catcheye::input::FrameReadStatus::Error) {
-            throw std::runtime_error("Camera Module 3 frame read failed");
-        }
-        if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
-            throw std::runtime_error("Camera Module 3 stream ended");
+        std::optional<catcheye::input::Frame> detector_frame;
+        if (rgb_camera_enabled) {
+            catcheye::input::Frame frame;
+            const auto read_status = bootstrap.camera_source->read(frame);
+            if (read_status == catcheye::input::FrameReadStatus::Error) {
+                throw std::runtime_error("Camera Module 3 frame read failed");
+            }
+            if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
+                throw std::runtime_error("Camera Module 3 stream ended");
+            }
+            detector_frame = std::move(frame);
         }
 
         CubeEyeFrameSet cubeeye_frames;
         if (cubeeye) {
             cubeeye_frames = cubeeye->read();
         }
+        if (!detector_frame.has_value()) {
+            detector_frame = cubeeye_amplitude_detector_frame(cubeeye_frames);
+        }
 
-        PickDetectionFrame detection_frame = processor.process_detection_frame(frame, cubeeye_frames, ++frame_index);
+        PickDetectionFrame detection_frame = processor.process_detection_frame(*detector_frame, cubeeye_frames, ++frame_index);
         if (websocket) {
             std::vector<catcheye::Detection> detections;
             detections.reserve(detection_frame.detections.size());
@@ -457,7 +473,7 @@ int run_pick_detection(AppBootstrap bootstrap)
             }
 
             catcheye::input::Frame publish_frame;
-            if (!catcheye::visualization::build_annotated_detection_frame(frame, detections, publish_frame)) {
+            if (!catcheye::visualization::build_annotated_detection_frame(*detector_frame, detections, publish_frame)) {
                 throw std::runtime_error("failed to build annotated detection frame");
             }
 
@@ -589,8 +605,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (!uses_rgb_camera(options.camera_input_mode) && options.camera_pipeline_set) {
         throw std::invalid_argument("--camera-pipeline requires RGB camera input");
     }
-    if (!options.viewer_only && !uses_rgb_camera(options.camera_input_mode)) {
-        throw std::invalid_argument("pick detection requires RGB camera input");
+    if (!options.viewer_only && !uses_rgb_camera(options.camera_input_mode)
+        && !cubeeye_frames_include(options.cubeeye_frames, meere::sensor::FrameType::Amplitude)) {
+        throw std::invalid_argument("CubeEye-only pick detection requires amplitude frame input");
     }
     if (!uses_cubeeye(options.camera_input_mode) && options.cubeeye_frames_set) {
         throw std::invalid_argument("--cubeeye-frames requires CubeEye input");

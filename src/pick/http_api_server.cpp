@@ -1,6 +1,7 @@
 #include "pick/http_api_server.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -18,11 +19,15 @@ struct JsonValue {
     enum class Type {
         Boolean,
         Integer,
+        Float,
+        String,
     };
 
     Type type = Type::Integer;
     bool bool_value = false;
-    int int_value = 0;
+    std::int64_t int_value = 0;
+    double float_value = 0.0;
+    std::string string_value;
 };
 
 std::string trim(std::string value)
@@ -34,27 +39,6 @@ std::string trim(std::string value)
         value.pop_back();
     }
     return value;
-}
-
-bool is_supported_cubeeye_property(std::string_view key)
-{
-    return key == "framerate" || key == "auto_exposure" || key == "illumination" || key == "depth_range_min" || key == "depth_range_max";
-}
-
-bool is_bool_cubeeye_property(std::string_view key)
-{
-    return key == "auto_exposure" || key == "illumination";
-}
-
-bool valid_int_value(std::string_view key, int value)
-{
-    if (key == "framerate") {
-        return value == 7 || value == 15 || value == 30;
-    }
-    if (key == "depth_range_min" || key == "depth_range_max") {
-        return value >= 0 && value <= 8192;
-    }
-    return false;
 }
 
 bool parse_value_body(std::string_view body, JsonValue& output)
@@ -78,15 +62,31 @@ bool parse_value_body(std::string_view body, JsonValue& output)
         output.bool_value = value_text == "true";
         return true;
     }
+    if (value_text.size() >= 2 && value_text.front() == '"' && value_text.back() == '"') {
+        output.type = JsonValue::Type::String;
+        output.string_value = value_text.substr(1, value_text.size() - 2);
+        return true;
+    }
 
     try {
         std::size_t consumed = 0;
-        const int value = std::stoi(value_text, &consumed);
+        const auto value = std::stoll(value_text, &consumed);
+        if (consumed == value_text.size()) {
+            output.type = JsonValue::Type::Integer;
+            output.int_value = value;
+            return true;
+        }
+    } catch (...) {
+    }
+
+    try {
+        std::size_t consumed = 0;
+        const double value = std::stod(value_text, &consumed);
         if (consumed != value_text.size()) {
             return false;
         }
-        output.type = JsonValue::Type::Integer;
-        output.int_value = value;
+        output.type = JsonValue::Type::Float;
+        output.float_value = value;
         return true;
     } catch (...) {
         return false;
@@ -192,7 +192,7 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const st
     if (cubeeye_ == nullptr) {
         return {409, "Conflict", catcheye::http::json_error_body("CubeEye is not enabled")};
     }
-    if (!is_supported_cubeeye_property(key)) {
+    if (!is_supported_cubeeye_property_key(key)) {
         return {400, "Bad Request", catcheye::http::json_error_body("unsupported CubeEye property")};
     }
 
@@ -202,19 +202,14 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const st
     }
 
     bool updated = false;
-    if (is_bool_cubeeye_property(key)) {
-        if (value.type != JsonValue::Type::Boolean) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value must be boolean")};
-        }
-        updated = cubeeye_->set_bool_property(key, value.bool_value);
+    if (value.type == JsonValue::Type::Boolean) {
+        updated = cubeeye_->set_property(key, value.bool_value);
+    } else if (value.type == JsonValue::Type::Integer) {
+        updated = cubeeye_->set_property(key, value.int_value);
+    } else if (value.type == JsonValue::Type::Float) {
+        updated = cubeeye_->set_property(key, value.float_value);
     } else {
-        if (value.type != JsonValue::Type::Integer) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value must be integer")};
-        }
-        if (!valid_int_value(key, value.int_value)) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value out of range")};
-        }
-        updated = cubeeye_->set_int_property(key, value.int_value);
+        updated = cubeeye_->set_property(key, value.string_value);
     }
 
     if (!updated) {

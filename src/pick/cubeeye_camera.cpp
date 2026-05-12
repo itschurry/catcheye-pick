@@ -1,8 +1,11 @@
 #include "pick/cubeeye_camera.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -15,14 +18,47 @@ namespace {
 constexpr int CUBEEYE_FRAME_WAIT_MS = 5000;
 constexpr std::string_view CUBEEYE_FRAMERATE_PROPERTY = "framerate";
 
-bool is_bool_property(std::string_view key)
-{
-    return key == "auto_exposure" || key == "illumination";
-}
+constexpr std::array<std::string_view, 27> CUBEEYE_PROPERTY_KEYS{
+    "amplitude_threshold_max",
+    "amplitude_threshold_min",
+    "amplitude_time_filter",
+    "amplitude_time_spatial_threshold",
+    "amplitude_time_temporal_threshold",
+    "auto_exposure",
+    "depth_average_median_filter",
+    "depth_average_median_max_n",
+    "depth_offset",
+    "depth_range_max",
+    "depth_range_min",
+    "depth_time_filter",
+    "depth_time_spatial_threshold",
+    "depth_time_temporal_threshold",
+    "flying_pixel_remove_filter",
+    "flying_pixel_remove_threshold",
+    "framerate",
+    "illumination",
+    "integraion_time",
+    "motion_blur_frequency",
+    "motion_blur_threshold",
+    "motion_blur_threshold2",
+    "noise_filter1",
+    "noise_filter2",
+    "noise_filter3",
+    "scattering_threshold",
+    "temperature",
+};
 
-bool is_int_property(std::string_view key)
+std::string json_escape(std::string_view value)
 {
-    return key == "framerate" || key == "depth_range_min" || key == "depth_range_max";
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        if (ch == '"' || ch == '\\') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
 }
 
 std::string property_json_pair(const meere::sensor::sptr_camera& camera, std::string_view key)
@@ -31,14 +67,57 @@ std::string property_json_pair(const meere::sensor::sptr_camera& camera, std::st
     if (result != meere::sensor::result::success || !property) {
         throw std::runtime_error("failed to get CubeEye property: " + std::string(key));
     }
+
     std::ostringstream oss;
     oss << "\"" << key << "\":";
-    if (is_bool_property(key)) {
+    switch (property->dataType()) {
+    case meere::sensor::DataType::Boolean:
         oss << (property->asBoolean(false) ? "true" : "false");
-    } else {
+        break;
+    case meere::sensor::DataType::S8:
+        oss << static_cast<int>(property->asInt8s(0));
+        break;
+    case meere::sensor::DataType::U8:
+        oss << static_cast<unsigned int>(property->asInt8u(0));
+        break;
+    case meere::sensor::DataType::S16:
+        oss << property->asInt16s(0);
+        break;
+    case meere::sensor::DataType::U16:
+        oss << property->asInt16u(0);
+        break;
+    case meere::sensor::DataType::S32:
+        oss << property->asInt32s(0);
+        break;
+    case meere::sensor::DataType::U32:
         oss << property->asInt32u(0);
+        break;
+    case meere::sensor::DataType::S64:
+        oss << property->asInt64s(0);
+        break;
+    case meere::sensor::DataType::U64:
+        oss << property->asInt64u(0);
+        break;
+    case meere::sensor::DataType::F32:
+        oss << property->asFlt32(0);
+        break;
+    case meere::sensor::DataType::F64:
+        oss << property->asFlt64(0);
+        break;
+    case meere::sensor::DataType::String:
+        oss << "\"" << json_escape(property->asString("")) << "\"";
+        break;
+    default:
+        throw std::runtime_error("unsupported CubeEye property type: " + std::string(key));
     }
     return oss.str();
+}
+
+template <typename T>
+bool in_range(std::int64_t value)
+{
+    return value >= static_cast<std::int64_t>(std::numeric_limits<T>::min())
+        && value <= static_cast<std::int64_t>(std::numeric_limits<T>::max());
 }
 
 } // namespace
@@ -172,51 +251,130 @@ std::optional<std::string> CubeEyeCameraSession::properties_json() const
 
     std::ostringstream oss;
     oss << "{";
-    const std::array<std::string_view, 5> keys{
-        "framerate",
-        "auto_exposure",
-        "illumination",
-        "depth_range_min",
-        "depth_range_max",
-    };
-    for (std::size_t i = 0; i < keys.size(); ++i) {
+    for (std::size_t i = 0; i < CUBEEYE_PROPERTY_KEYS.size(); ++i) {
         if (i > 0) {
             oss << ',';
         }
-        oss << property_json_pair(camera_, keys[i]);
+        oss << property_json_pair(camera_, CUBEEYE_PROPERTY_KEYS[i]);
     }
     oss << "}";
     return oss.str();
 }
 
-bool CubeEyeCameraSession::set_bool_property(std::string_view key, bool value)
+bool CubeEyeCameraSession::set_property(std::string_view key, bool value)
 {
-    if (!is_bool_property(key)) {
+    if (!is_supported_cubeeye_property_key(key)) {
         return false;
     }
     std::lock_guard<std::mutex> lock(camera_mutex_);
     if (!camera_) {
+        return false;
+    }
+    const auto [result, current] = camera_->getProperty(std::string(key));
+    if (result != meere::sensor::result::success || !current || current->dataType() != meere::sensor::DataType::Boolean) {
         return false;
     }
     const auto property = meere::sensor::make_property_bool(std::string(key), value);
     return property && camera_->setProperty(property) == meere::sensor::result::success;
 }
 
-bool CubeEyeCameraSession::set_int_property(std::string_view key, int value)
+bool CubeEyeCameraSession::set_property(std::string_view key, std::int64_t value)
 {
-    if (!is_int_property(key)) {
+    if (!is_supported_cubeeye_property_key(key)) {
         return false;
     }
     std::lock_guard<std::mutex> lock(camera_mutex_);
     if (!camera_) {
         return false;
     }
-    meere::sensor::sptr_property property;
-    if (key == "framerate") {
-        property = meere::sensor::make_property_8u(std::string(key), static_cast<meere::sensor::int8u>(value));
-    } else {
-        property = meere::sensor::make_property_16u(std::string(key), static_cast<meere::sensor::int16u>(value));
+    const auto [result, current] = camera_->getProperty(std::string(key));
+    if (result != meere::sensor::result::success || !current) {
+        return false;
     }
+    meere::sensor::sptr_property property;
+    switch (current->dataType()) {
+    case meere::sensor::DataType::S8:
+        if (in_range<meere::sensor::int8s>(value)) {
+            property = meere::sensor::make_property_8s(std::string(key), static_cast<meere::sensor::int8s>(value));
+        }
+        break;
+    case meere::sensor::DataType::U8:
+        if (in_range<meere::sensor::int8u>(value)) {
+            property = meere::sensor::make_property_8u(std::string(key), static_cast<meere::sensor::int8u>(value));
+        }
+        break;
+    case meere::sensor::DataType::S16:
+        if (in_range<meere::sensor::int16s>(value)) {
+            property = meere::sensor::make_property_16s(std::string(key), static_cast<meere::sensor::int16s>(value));
+        }
+        break;
+    case meere::sensor::DataType::U16:
+        if (in_range<meere::sensor::int16u>(value)) {
+            property = meere::sensor::make_property_16u(std::string(key), static_cast<meere::sensor::int16u>(value));
+        }
+        break;
+    case meere::sensor::DataType::S32:
+        if (in_range<meere::sensor::int32s>(value)) {
+            property = meere::sensor::make_property_32s(std::string(key), static_cast<meere::sensor::int32s>(value));
+        }
+        break;
+    case meere::sensor::DataType::U32:
+        if (in_range<meere::sensor::int32u>(value)) {
+            property = meere::sensor::make_property_32u(std::string(key), static_cast<meere::sensor::int32u>(value));
+        }
+        break;
+    case meere::sensor::DataType::S64:
+        property = meere::sensor::make_property_64s(std::string(key), static_cast<meere::sensor::int64s>(value));
+        break;
+    case meere::sensor::DataType::U64:
+        if (value >= 0) {
+            property = meere::sensor::make_property_64u(std::string(key), static_cast<meere::sensor::int64u>(value));
+        }
+        break;
+    default:
+        return false;
+    }
+    return property && camera_->setProperty(property) == meere::sensor::result::success;
+}
+
+bool CubeEyeCameraSession::set_property(std::string_view key, double value)
+{
+    if (!is_supported_cubeeye_property_key(key)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return false;
+    }
+    const auto [result, current] = camera_->getProperty(std::string(key));
+    if (result != meere::sensor::result::success || !current) {
+        return false;
+    }
+    meere::sensor::sptr_property property;
+    if (current->dataType() == meere::sensor::DataType::F32) {
+        property = meere::sensor::make_property_32f(std::string(key), static_cast<meere::sensor::flt32>(value));
+    } else if (current->dataType() == meere::sensor::DataType::F64) {
+        property = meere::sensor::make_property_64f(std::string(key), static_cast<meere::sensor::flt64>(value));
+    } else {
+        return false;
+    }
+    return property && camera_->setProperty(property) == meere::sensor::result::success;
+}
+
+bool CubeEyeCameraSession::set_property(std::string_view key, std::string_view value)
+{
+    if (!is_supported_cubeeye_property_key(key)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return false;
+    }
+    const auto [result, current] = camera_->getProperty(std::string(key));
+    if (result != meere::sensor::result::success || !current || current->dataType() != meere::sensor::DataType::String) {
+        return false;
+    }
+    const auto property = meere::sensor::make_property_string(std::string(key), std::string(value));
     return property && camera_->setProperty(property) == meere::sensor::result::success;
 }
 
@@ -255,6 +413,11 @@ int list_cubeeye_sources()
     }
 
     return 0;
+}
+
+bool is_supported_cubeeye_property_key(std::string_view key)
+{
+    return std::find(CUBEEYE_PROPERTY_KEYS.begin(), CUBEEYE_PROPERTY_KEYS.end(), key) != CUBEEYE_PROPERTY_KEYS.end();
 }
 
 } // namespace catcheye::pick

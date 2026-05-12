@@ -49,6 +49,12 @@ struct PickDetectionResult {
         int sample_count = 0;
         int pointcloud_x = 0;
         int pointcloud_y = 0;
+        float min_x = 0.0F;
+        float min_y = 0.0F;
+        float min_z = 0.0F;
+        float max_x = 0.0F;
+        float max_y = 0.0F;
+        float max_z = 0.0F;
     };
     std::optional<ObjectPosition> position;
 };
@@ -94,5 +100,6 @@ std::string build_viewer_metadata(
     const PickDetectionFrame* detection_frame = nullptr);
 std::string build_detection_metadata(const PickDetectionFrame& frame);
 std::vector<std::span<const std::uint8_t>> viewer_payload_spans(const PickViewerFrame& frame);
+catcheye::input::Frame cubeeye_amplitude_detector_frame(const CubeEyeFrameSet& cubeeye_frames);
 
 } // namespace catcheye::pick

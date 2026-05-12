@@ -37,8 +37,10 @@ class CubeEyeCameraSession final {
     CubeEyeFrameSet read();
     void close();
     std::optional<std::string> properties_json() const;
-    bool set_bool_property(std::string_view key, bool value);
-    bool set_int_property(std::string_view key, int value);
+    bool set_property(std::string_view key, bool value);
+    bool set_property(std::string_view key, std::int64_t value);
+    bool set_property(std::string_view key, double value);
+    bool set_property(std::string_view key, std::string_view value);
 
   private:
     class CaptureSink final : public meere::sensor::sink {
@@ -70,5 +72,6 @@ class CubeEyeCameraSession final {
 };
 
 int list_cubeeye_sources();
+bool is_supported_cubeeye_property_key(std::string_view key);
 
 } // namespace catcheye::pick
