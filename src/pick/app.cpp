@@ -613,13 +613,13 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
     bootstrap.processor_config.detector.backend = options.detector_backend;
     auto& ncnn_cfg = bootstrap.processor_config.detector.ncnn;
-    ncnn_cfg.param_path = resolve_default_model_path(executable_path, "yolo26n_ncnn_model/model.ncnn.param");
-    ncnn_cfg.bin_path = resolve_default_model_path(executable_path, "yolo26n_ncnn_model/model.ncnn.bin");
+    ncnn_cfg.param_path = resolve_default_model_path(executable_path, "yolo26s_ncnn_model/model.ncnn.param");
+    ncnn_cfg.bin_path = resolve_default_model_path(executable_path, "yolo26s_ncnn_model/model.ncnn.bin");
     ncnn_cfg.metadata_path = options.metadata_path.empty()
-        ? resolve_default_model_path(executable_path, "yolo26n_ncnn_model/metadata.yaml")
+        ? resolve_default_model_path(executable_path, "yolo26s_ncnn_model/metadata.yaml")
         : options.metadata_path;
     ncnn_cfg.num_threads = options.num_threads;
-    ncnn_cfg.allowed_class_ids = {0, 1};
+    ncnn_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
     if (!options.positional_args.empty()) {
         ncnn_cfg.param_path = options.positional_args[0];
     }
@@ -633,9 +633,9 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     auto& hailo_cfg = bootstrap.processor_config.detector.hailo;
     hailo_cfg.hef_path = options.hef_path;
     hailo_cfg.metadata_path = options.metadata_path.empty()
-        ? resolve_default_model_path(executable_path, "yolo26n_ncnn_model/metadata.yaml")
+        ? resolve_default_model_path(executable_path, "yolo26s_ncnn_model/metadata.yaml")
         : options.metadata_path;
-    hailo_cfg.allowed_class_ids = {0, 1};
+    hailo_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
     bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
     bootstrap.processor_config.roi_config_path = options.roi_config_path.empty()
