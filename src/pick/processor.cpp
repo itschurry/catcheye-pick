@@ -15,6 +15,7 @@
 
 #include "CubeEyeBasicFrame.h"
 #include "CubeEyePointCloudFrame.h"
+#include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/input/pixel_format.hpp"
 #include "catcheye/roi/roi_repository.hpp"
 #include "catcheye/roi/roi_validation.hpp"
@@ -135,6 +136,34 @@ std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr)
         throw std::runtime_error("failed to encode JPEG frame");
     }
     return jpeg;
+}
+
+std::string escape_json(std::string_view value)
+{
+    std::ostringstream oss;
+    for (const char ch : value) {
+        switch (ch) {
+        case '"':
+            oss << "\\\"";
+            break;
+        case '\\':
+            oss << "\\\\";
+            break;
+        case '\n':
+            oss << "\\n";
+            break;
+        case '\r':
+            oss << "\\r";
+            break;
+        case '\t':
+            oss << "\\t";
+            break;
+        default:
+            oss << ch;
+            break;
+        }
+    }
+    return oss.str();
 }
 
 ViewerPayload camera_payload(const catcheye::input::Frame& frame)
@@ -352,10 +381,14 @@ std::string cubeeye_frame_label(meere::sensor::FrameType type)
 }
 
 PickProcessor::PickProcessor(PickProcessorConfig config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)),
+      detector_(config_.detection_enabled ? catcheye::create_detector(config_.detector) : nullptr) {}
 
 bool PickProcessor::initialize()
 {
+    if (config_.detection_enabled && !detector_->initialize()) {
+        return false;
+    }
     return true;
 }
 
@@ -401,6 +434,30 @@ bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfi
     config_.pallet_roi_enabled = true;
     config_.pallet_roi_config = roi_config;
     return true;
+}
+
+PickDetectionFrame PickProcessor::process_detection_frame(
+    const catcheye::input::Frame& camera_frame,
+    const CubeEyeFrameSet&,
+    std::uint64_t frame_index)
+{
+    if (!config_.detection_enabled || !detector_) {
+        throw std::runtime_error("pick detection pipeline is disabled");
+    }
+
+    PickDetectionFrame output;
+    output.frame_index = frame_index;
+    const std::vector<catcheye::Detection> detections = detector_->detect(camera_frame);
+    output.detections.reserve(detections.size());
+    for (const auto& detection : detections) {
+        output.detections.push_back(PickDetectionResult{
+            .class_id = detection.class_id,
+            .class_name = detector_->class_name(detection.class_id),
+            .score = detection.score,
+            .box = detection.box,
+        });
+    }
+    return output;
 }
 
 PickViewerFrame PickProcessor::process_viewer_frame(
@@ -459,6 +516,30 @@ std::string build_viewer_metadata(const PickViewerFrame& frame)
             << "\"source_timestamp_ms\":" << payload.source_timestamp_ms << ','
             << "\"payload_size\":" << payload.bytes.size()
             << "}";
+    }
+    oss << "]}";
+    return oss.str();
+}
+
+std::string build_detection_metadata(const PickDetectionFrame& frame)
+{
+    std::ostringstream oss;
+    oss << "{\"viewer_only\":false,"
+        << "\"detection_count\":" << frame.detections.size()
+        << ",\"detections\":[";
+    for (std::size_t i = 0; i < frame.detections.size(); ++i) {
+        const auto& detection = frame.detections[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"class_id\":" << detection.class_id
+            << ",\"class_name\":\"" << escape_json(detection.class_name) << "\""
+            << ",\"score\":" << detection.score
+            << ",\"box\":{\"x\":" << detection.box.x
+            << ",\"y\":" << detection.box.y
+            << ",\"width\":" << detection.box.width
+            << ",\"height\":" << detection.box.height
+            << "}}";
     }
     oss << "]}";
     return oss.str();

@@ -22,6 +22,7 @@
 #include "catcheye/roi/roi_repository.hpp"
 #include "catcheye/roi/roi_validation.hpp"
 #include "catcheye/transport/websocket_publisher.hpp"
+#include "catcheye/visualization/annotation_renderer.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/http_api_server.hpp"
 #include "pick/processor.hpp"
@@ -41,9 +42,12 @@ void print_usage() {
               << "  --version                 Show CubeEye SDK version\n"
               << "  --list-cubeeye             List connected CubeEye camera sources\n"
               << "  --detector <name>         Detector backend: ncnn | hailo\n"
+              << "  --hef <path>              Hailo HEF model path\n"
+              << "  --metadata <path>         Detector metadata YAML path\n"
+              << "  --num-threads <count>     NCNN inference threads (default: 2)\n"
               << "  --camera-input <mode>     Camera input: rgb-cubeeye | rgb | cubeeye\n"
               << "  --viewer-only             Start selected camera input without detection\n"
-              << "  --ws [port]               Publish viewer-only frames over WebSocket\n"
+              << "  --ws [port]               Publish frames over WebSocket\n"
               << "  --http-port <port>        HTTP API port (default: 8090)\n"
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
               << "  --roi <path>              Person ROI config path\n"
@@ -53,12 +57,12 @@ void print_usage() {
               << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
 }
 
-DetectorBackend parse_detector_backend(std::string_view value) {
+catcheye::DetectorBackend parse_detector_backend(std::string_view value) {
     if (value == "ncnn") {
-        return DetectorBackend::Ncnn;
+        return catcheye::DetectorBackend::Ncnn;
     }
     if (value == "hailo") {
-        return DetectorBackend::Hailo;
+        return catcheye::DetectorBackend::Hailo;
     }
 
     throw std::invalid_argument("unknown detector backend: " + std::string(value));
@@ -108,6 +112,17 @@ const char* publisher_name(PublisherType type) {
     return "unknown";
 }
 
+const char* detector_backend_name(catcheye::DetectorBackend backend)
+{
+    switch (backend) {
+    case catcheye::DetectorBackend::Ncnn:
+        return "ncnn";
+    case catcheye::DetectorBackend::Hailo:
+        return "hailo";
+    }
+    return "unknown";
+}
+
 bool is_supported_cubeeye_camera_fps(int fps)
 {
     return fps == 7 || fps == 15 || fps == 30;
@@ -118,6 +133,13 @@ std::string resolve_default_config_path(const char* executable_path, std::string
     const std::filesystem::path executable = executable_path ? std::filesystem::path(executable_path) : std::filesystem::path{};
     const std::filesystem::path install_root = executable.has_parent_path() ? executable.parent_path().parent_path() : std::filesystem::current_path();
     return (install_root / "config" / filename).string();
+}
+
+std::string resolve_default_model_path(const char* executable_path, std::string_view filename)
+{
+    const std::filesystem::path executable = executable_path ? std::filesystem::path(executable_path) : std::filesystem::path{};
+    const std::filesystem::path install_root = executable.has_parent_path() ? executable.parent_path().parent_path() : std::filesystem::current_path();
+    return (install_root / "models" / filename).string();
 }
 
 catcheye::roi::CameraRoiConfig load_roi_config(const std::string& path)
@@ -363,6 +385,93 @@ int run_viewer_only(AppBootstrap bootstrap) {
     return 0;
 }
 
+int run_pick_detection(AppBootstrap bootstrap)
+{
+    if (bootstrap.camera_source == nullptr) {
+        throw std::runtime_error("pick detection requires RGB camera input");
+    }
+
+    const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
+    const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
+    std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
+    const int cubeeye_camera_fps = bootstrap.cubeeye_camera_fps;
+    PickProcessor processor(std::move(bootstrap.processor_config));
+    if (!processor.initialize()) {
+        throw std::runtime_error("failed to initialize pick processor");
+    }
+
+    if (!bootstrap.camera_source->open()) {
+        throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
+    }
+
+    std::optional<CubeEyeCameraSession> cubeeye;
+    if (!cubeeye_frame_specs.empty()) {
+        cubeeye.emplace(std::move(cubeeye_frame_specs), cubeeye_camera_fps);
+        cubeeye->open();
+    }
+
+    HttpApiServer http_api_server(
+        bootstrap.http_api_server_config,
+        http_roi_config_path,
+        http_pallet_roi_config_path,
+        &processor,
+        cubeeye ? &*cubeeye : nullptr);
+    if (!http_api_server.start()) {
+        throw std::runtime_error("failed to start HTTP API server");
+    }
+
+    std::optional<catcheye::transport::WebSocketPublisher> websocket;
+    if (bootstrap.publisher_type == PublisherType::WebSocket) {
+        websocket.emplace(bootstrap.websocket_publisher_config);
+        if (!websocket->start()) {
+            throw std::runtime_error("failed to start WebSocket publisher");
+        }
+    }
+
+    std::uint64_t frame_index = 0;
+    while (true) {
+        catcheye::input::Frame frame;
+        const auto read_status = bootstrap.camera_source->read(frame);
+        if (read_status == catcheye::input::FrameReadStatus::Error) {
+            throw std::runtime_error("Camera Module 3 frame read failed");
+        }
+        if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
+            throw std::runtime_error("Camera Module 3 stream ended");
+        }
+
+        CubeEyeFrameSet cubeeye_frames;
+        if (cubeeye) {
+            cubeeye_frames = cubeeye->read();
+        }
+
+        PickDetectionFrame detection_frame = processor.process_detection_frame(frame, cubeeye_frames, ++frame_index);
+        if (websocket) {
+            std::vector<catcheye::Detection> detections;
+            detections.reserve(detection_frame.detections.size());
+            for (const auto& detection : detection_frame.detections) {
+                detections.push_back(catcheye::Detection{
+                    .class_id = detection.class_id,
+                    .score = detection.score,
+                    .box = detection.box,
+                });
+            }
+
+            catcheye::input::Frame publish_frame;
+            if (!catcheye::visualization::build_annotated_detection_frame(frame, detections, publish_frame)) {
+                throw std::runtime_error("failed to build annotated detection frame");
+            }
+            websocket->publish(
+                publish_frame,
+                catcheye::protocol::FrameMessage{
+                    .stream_name = "pick-detection",
+                    .metadata_json = build_detection_metadata(detection_frame),
+                },
+                catcheye::transport::PublishContext{.frame_index = detection_frame.frame_index});
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
+    }
+}
+
 } // namespace
 
 AppOptions parse_app_options(int argc, char** argv) {
@@ -436,6 +545,21 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--detector requires a value");
             }
             options.detector_backend = parse_detector_backend(argv[++i]);
+        } else if (arg == "--hef") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--hef requires a value");
+            }
+            options.hef_path = argv[++i];
+        } else if (arg == "--metadata") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--metadata requires a value");
+            }
+            options.metadata_path = argv[++i];
+        } else if (arg == "--num-threads") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--num-threads requires a value");
+            }
+            options.num_threads = std::stoi(argv[++i]);
         } else if (arg == "--rtsp") {
             throw std::invalid_argument("--rtsp is not supported by catcheye-pick");
         } else {
@@ -452,20 +576,20 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (options.pointcloud_downsample <= 0) {
         throw std::invalid_argument("--pointcloud-downsample must be a positive integer");
     }
+    if (options.num_threads <= 0) {
+        throw std::invalid_argument("--num-threads must be a positive integer");
+    }
     if (options.cubeeye_camera_fps_set && !is_supported_cubeeye_camera_fps(options.cubeeye_camera_fps)) {
         throw std::invalid_argument("--cubeeye-camera-fps supports S111D values only: 7, 15, 30");
     }
     if (options.viewer_only && options.publisher_type != PublisherType::WebSocket) {
         throw std::invalid_argument("--viewer-only requires --ws");
     }
-    if (!options.viewer_only && options.publisher_type == PublisherType::WebSocket) {
-        throw std::invalid_argument("--ws is only supported with --viewer-only");
-    }
-    if (!options.viewer_only && !options.camera_pipeline.empty()) {
-        throw std::invalid_argument("--camera-pipeline is only supported with --viewer-only");
-    }
     if (!uses_rgb_camera(options.camera_input_mode) && options.camera_pipeline_set) {
         throw std::invalid_argument("--camera-pipeline requires RGB camera input");
+    }
+    if (!options.viewer_only && !uses_rgb_camera(options.camera_input_mode)) {
+        throw std::invalid_argument("pick detection requires RGB camera input");
     }
     if (!uses_cubeeye(options.camera_input_mode) && options.cubeeye_frames_set) {
         throw std::invalid_argument("--cubeeye-frames requires CubeEye input");
@@ -476,6 +600,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (options.viewer_only && !options.positional_args.empty()) {
         throw std::invalid_argument("positional arguments are not used with --viewer-only");
     }
+    if (options.viewer_only && (!options.hef_path.empty() || !options.metadata_path.empty())) {
+        throw std::invalid_argument("model and metadata arguments are not used with --viewer-only");
+    }
 
     return options;
 }
@@ -483,6 +610,31 @@ AppOptions parse_app_options(int argc, char** argv) {
 AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executable_path) {
     AppBootstrap bootstrap;
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
+    bootstrap.processor_config.detector.backend = options.detector_backend;
+    auto& ncnn_cfg = bootstrap.processor_config.detector.ncnn;
+    ncnn_cfg.param_path = resolve_default_model_path(executable_path, "yolo26n_ncnn_model/model.ncnn.param");
+    ncnn_cfg.bin_path = resolve_default_model_path(executable_path, "yolo26n_ncnn_model/model.ncnn.bin");
+    ncnn_cfg.metadata_path = options.metadata_path.empty()
+        ? resolve_default_model_path(executable_path, "yolo26n_ncnn_model/metadata.yaml")
+        : options.metadata_path;
+    ncnn_cfg.num_threads = options.num_threads;
+    ncnn_cfg.allowed_class_ids = {0, 1};
+    if (!options.positional_args.empty()) {
+        ncnn_cfg.param_path = options.positional_args[0];
+    }
+    if (options.positional_args.size() > 1) {
+        ncnn_cfg.bin_path = options.positional_args[1];
+    }
+    if (options.positional_args.size() > 2 && options.metadata_path.empty()) {
+        ncnn_cfg.metadata_path = options.positional_args[2];
+    }
+
+    auto& hailo_cfg = bootstrap.processor_config.detector.hailo;
+    hailo_cfg.hef_path = options.hef_path;
+    hailo_cfg.metadata_path = options.metadata_path.empty()
+        ? resolve_default_model_path(executable_path, "yolo26n_ncnn_model/metadata.yaml")
+        : options.metadata_path;
+    hailo_cfg.allowed_class_ids = {0, 1};
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
     bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
     bootstrap.processor_config.roi_config_path = options.roi_config_path.empty()
@@ -514,6 +666,14 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
         });
     }
 
+    if (!options.viewer_only && options.detector_backend == catcheye::DetectorBackend::Ncnn
+        && (ncnn_cfg.param_path.empty() || ncnn_cfg.bin_path.empty())) {
+        throw std::runtime_error("NCNN model paths are required");
+    }
+    if (!options.viewer_only && options.detector_backend == catcheye::DetectorBackend::Hailo && hailo_cfg.hef_path.empty()) {
+        throw std::runtime_error("Hailo HEF path is required; pass --hef <model.hef>");
+    }
+
     return bootstrap;
 }
 
@@ -537,6 +697,9 @@ int run_app(int argc, char** argv) {
     AppBootstrap bootstrap = build_app_bootstrap(options, argv[0]);
     std::cerr << "catcheye-pick starting (mode='" << describe_runtime_mode(options) << "', publisher='"
               << publisher_name(bootstrap.publisher_type) << "'";
+    if (!options.viewer_only) {
+        std::cerr << ", detector='" << detector_backend_name(options.detector_backend) << "'";
+    }
     if (uses_cubeeye(options.camera_input_mode)) {
         std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
                   << ", pointcloud_downsample=" << options.pointcloud_downsample;
@@ -550,8 +713,7 @@ int run_app(int argc, char** argv) {
         return run_viewer_only(std::move(bootstrap));
     }
 
-    print_usage();
-    return 0;
+    return run_pick_detection(std::move(bootstrap));
 }
 
 } // namespace catcheye::pick

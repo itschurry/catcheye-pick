@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "catcheye/detection/detector.hpp"
 #include "catcheye/input/frame.hpp"
 #include "catcheye/roi/camera_roi_config.hpp"
 #include "pick/cubeeye_camera.hpp"
@@ -35,11 +37,27 @@ struct PickViewerFrame {
     catcheye::roi::CameraRoiConfig pallet_roi_config;
 };
 
+struct PickDetectionResult {
+    int class_id = -1;
+    std::string class_name;
+    float score = 0.0F;
+    catcheye::BoundingBox box{};
+};
+
+struct PickDetectionFrame {
+    std::uint64_t frame_index = 0;
+    std::vector<PickDetectionResult> detections;
+};
+
 class PickProcessor final {
   public:
     explicit PickProcessor(PickProcessorConfig config);
 
     bool initialize();
+    PickDetectionFrame process_detection_frame(
+        const catcheye::input::Frame& camera_frame,
+        const CubeEyeFrameSet& cubeeye_frames,
+        std::uint64_t frame_index);
     PickViewerFrame process_viewer_frame(
         const std::optional<catcheye::input::Frame>& camera_frame,
         const CubeEyeFrameSet& cubeeye_frames,
@@ -58,9 +76,11 @@ class PickProcessor final {
 
     mutable std::mutex roi_mutex_;
     PickProcessorConfig config_;
+    std::unique_ptr<catcheye::IDetector> detector_;
 };
 
 std::string build_viewer_metadata(const PickViewerFrame& frame);
+std::string build_detection_metadata(const PickDetectionFrame& frame);
 std::vector<std::span<const std::uint8_t>> viewer_payload_spans(const PickViewerFrame& frame);
 
 } // namespace catcheye::pick

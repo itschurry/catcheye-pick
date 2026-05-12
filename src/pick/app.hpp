@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/input/frame_source.hpp"
 #include "catcheye/transport/websocket_publisher.hpp"
 #include "pick/http_api_server.hpp"
@@ -14,11 +15,6 @@ namespace catcheye::pick {
 enum class PublisherType {
     None,
     WebSocket,
-};
-
-enum class DetectorBackend {
-    Ncnn,
-    Hailo,
 };
 
 enum class CameraInputMode {
@@ -42,10 +38,13 @@ struct AppOptions {
     std::string pallet_roi_config_path;
     int cubeeye_camera_fps = 0;
     int pointcloud_downsample = 4;
+    int num_threads = 2;
     bool camera_pipeline_set = false;
     bool cubeeye_frames_set = false;
     bool cubeeye_camera_fps_set = false;
-    DetectorBackend detector_backend = DetectorBackend::Ncnn;
+    catcheye::DetectorBackend detector_backend = catcheye::DetectorBackend::Ncnn;
+    std::string hef_path;
+    std::string metadata_path;
     std::vector<std::string> positional_args;
 };
 

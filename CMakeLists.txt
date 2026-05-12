@@ -124,6 +124,8 @@ target_link_libraries(catcheye_pick
         catcheye::vision_protocol
         catcheye::vision_runtime
         catcheye::vision_transport
+        catcheye::vision_visualization
+        catcheye::vision_http
         cubeeye::sdk
         ${OpenCV_LIBS}
         spdlog::spdlog
@@ -217,6 +219,20 @@ install(TARGETS catcheye_vision_runtime
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+install(TARGETS catcheye_vision_visualization
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS catcheye_vision_http
+    EXPORT catcheye_pick_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 install(TARGETS catcheye_pick
     EXPORT catcheye_pick_targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -262,15 +278,31 @@ install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-transport/includ
 install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-runtime/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-visualization/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-http/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
 
 install(DIRECTORY models
     DESTINATION ${CMAKE_INSTALL_DATADIR}/..
+    PATTERN ".DS_Store" EXCLUDE
     PATTERN "__pycache__" EXCLUDE
     PATTERN "*.pyc" EXCLUDE
 )
 
 install(DIRECTORY config
     DESTINATION ${CMAKE_INSTALL_DATADIR}/..
+    PATTERN ".DS_Store" EXCLUDE
+)
+
+install(PROGRAMS
+    scripts/run-all.sh
+    scripts/run-pcl.sh
+    scripts/run-rgb-ncnn.sh
+    scripts/run-rgb.sh
+    DESTINATION scripts
 )
 
 if(CATCHEYE_PICK_BUNDLE_RUNTIME_LIBS)

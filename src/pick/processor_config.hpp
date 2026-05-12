@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "CubeEyeFrame.h"
+#include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/roi/camera_roi_config.hpp"
 
 namespace catcheye::pick {
@@ -17,6 +18,7 @@ struct CubeEyeFrameSpec {
 
 struct PickProcessorConfig {
     bool detection_enabled = true;
+    catcheye::DetectorFactoryConfig detector;
     std::vector<CubeEyeFrameSpec> cubeeye_frames;
     int pointcloud_downsample = 4;
     bool roi_enabled = false;
