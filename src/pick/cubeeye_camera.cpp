@@ -37,7 +37,7 @@ constexpr std::array<std::string_view, 27> CUBEEYE_PROPERTY_KEYS{
     "flying_pixel_remove_threshold",
     "framerate",
     "illumination",
-    "integraion_time",
+    "integration_time",
     "motion_blur_frequency",
     "motion_blur_threshold",
     "motion_blur_threshold2",
@@ -61,11 +61,11 @@ std::string json_escape(std::string_view value)
     return escaped;
 }
 
-std::string property_json_pair(const meere::sensor::sptr_camera& camera, std::string_view key)
+std::optional<std::string> property_json_pair(const meere::sensor::sptr_camera& camera, std::string_view key)
 {
     const auto [result, property] = camera->getProperty(std::string(key));
     if (result != meere::sensor::result::success || !property) {
-        throw std::runtime_error("failed to get CubeEye property: " + std::string(key));
+        return std::nullopt;
     }
 
     std::ostringstream oss;
@@ -251,11 +251,17 @@ std::optional<std::string> CubeEyeCameraSession::properties_json() const
 
     std::ostringstream oss;
     oss << "{";
+    bool first = true;
     for (std::size_t i = 0; i < CUBEEYE_PROPERTY_KEYS.size(); ++i) {
-        if (i > 0) {
+        const auto property = property_json_pair(camera_, CUBEEYE_PROPERTY_KEYS[i]);
+        if (!property.has_value()) {
+            continue;
+        }
+        if (!first) {
             oss << ',';
         }
-        oss << property_json_pair(camera_, CUBEEYE_PROPERTY_KEYS[i]);
+        oss << *property;
+        first = false;
     }
     oss << "}";
     return oss.str();
