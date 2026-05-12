@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -23,16 +24,15 @@
 namespace catcheye::pick {
 namespace {
 
-std::uint64_t wall_clock_millis()
-{
+constexpr float RGB_TO_CUBEEYE_OFFSET_U = 0.00F;
+constexpr float RGB_TO_CUBEEYE_OFFSET_V = 0.30F;
+
+std::uint64_t wall_clock_millis() {
     return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
-std::vector<std::string> split_csv(std::string_view value)
-{
+std::vector<std::string> split_csv(std::string_view value) {
     std::vector<std::string> items;
     std::string current;
     for (const char ch : value) {
@@ -55,8 +55,7 @@ std::vector<std::string> split_csv(std::string_view value)
     return items;
 }
 
-CubeEyeFrameSpec parse_cubeeye_frame_name(const std::string& name)
-{
+CubeEyeFrameSpec parse_cubeeye_frame_name(const std::string& name) {
     if (name == "depth") {
         return {.name = "cubeeye_depth", .type = meere::sensor::FrameType::Depth};
     }
@@ -72,8 +71,7 @@ CubeEyeFrameSpec parse_cubeeye_frame_name(const std::string& name)
     throw std::invalid_argument("unsupported CubeEye frame: " + name);
 }
 
-cv::Mat frame_to_bgr(const catcheye::input::Frame& frame)
-{
+cv::Mat frame_to_bgr(const catcheye::input::Frame& frame) {
     if (frame.empty() || frame.width <= 0 || frame.height <= 0 || frame.stride <= 0) {
         return {};
     }
@@ -125,8 +123,7 @@ cv::Mat frame_to_bgr(const catcheye::input::Frame& frame)
     return {};
 }
 
-std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr)
-{
+std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr) {
     if (bgr.empty()) {
         throw std::runtime_error("cannot encode empty frame");
     }
@@ -138,8 +135,7 @@ std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr)
     return jpeg;
 }
 
-std::string escape_json(std::string_view value)
-{
+std::string escape_json(std::string_view value) {
     std::ostringstream oss;
     for (const char ch : value) {
         switch (ch) {
@@ -166,8 +162,7 @@ std::string escape_json(std::string_view value)
     return oss.str();
 }
 
-ViewerPayload camera_payload(const catcheye::input::Frame& frame)
-{
+ViewerPayload camera_payload(const catcheye::input::Frame& frame) {
     const cv::Mat bgr = frame_to_bgr(frame);
     if (bgr.empty()) {
         throw std::runtime_error("failed to convert Camera Module 3 frame");
@@ -185,8 +180,7 @@ ViewerPayload camera_payload(const catcheye::input::Frame& frame)
     };
 }
 
-cv::Mat normalize_u16_frame_to_bgr(const meere::sensor::sptr_frame& frame)
-{
+cv::Mat normalize_u16_frame_to_bgr(const meere::sensor::sptr_frame& frame) {
     const auto basic = meere::sensor::frame_cast_basic16u(frame);
     if (!basic || !basic->frameData() || basic->frameData()->empty()) {
         return {};
@@ -203,8 +197,7 @@ cv::Mat normalize_u16_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     return colored;
 }
 
-cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
-{
+cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame) {
     const auto basic = meere::sensor::frame_cast_basic8u(frame);
     if (!basic || !basic->frameData() || basic->frameData()->empty() || frame->frameFormat() != "RGB888") {
         return {};
@@ -219,8 +212,7 @@ cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     return bgr;
 }
 
-void write_float32_le(std::uint8_t*& output, float value)
-{
+void write_float32_le(std::uint8_t*& output, float value) {
     if constexpr (std::endian::native == std::endian::little) {
         std::memcpy(output, &value, sizeof(value));
         output += sizeof(value);
@@ -235,8 +227,88 @@ void write_float32_le(std::uint8_t*& output, float value)
     output += sizeof(value);
 }
 
-ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample)
-{
+const CubeEyeFrameEntry* find_pointcloud_frame(const CubeEyeFrameSet& frame_set) {
+    const auto it = std::find_if(frame_set.frames.begin(), frame_set.frames.end(),
+                                 [](const CubeEyeFrameEntry& entry) { return entry.spec.type == meere::sensor::FrameType::PointCloud; });
+    return it == frame_set.frames.end() ? nullptr : &*it;
+}
+
+float median_value(std::vector<float>& values) {
+    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2U);
+    std::nth_element(values.begin(), middle, values.end());
+    return *middle;
+}
+
+std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(const catcheye::BoundingBox& box,
+                                                                            const catcheye::input::Frame& camera_frame,
+                                                                            const CubeEyeFrameEntry& pointcloud_entry) {
+    const auto pointcloud = meere::sensor::frame_cast_pcl32f(pointcloud_entry.frame);
+    if (!pointcloud || !pointcloud->frameDataX() || !pointcloud->frameDataY() || !pointcloud->frameDataZ()) {
+        return std::nullopt;
+    }
+
+    const int width = pointcloud->frameWidth();
+    const int height = pointcloud->frameHeight();
+    if (width <= 0 || height <= 0 || camera_frame.width <= 0 || camera_frame.height <= 0) {
+        return std::nullopt;
+    }
+
+    const auto expected_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    const auto* xs = pointcloud->frameDataX();
+    const auto* ys = pointcloud->frameDataY();
+    const auto* zs = pointcloud->frameDataZ();
+    if (xs->size() < expected_count || ys->size() < expected_count || zs->size() < expected_count) {
+        return std::nullopt;
+    }
+
+    const float center_x = box.x + (box.width * 0.5F);
+    const float center_y = box.y + (box.height * 0.5F);
+    const float pointcloud_u = std::clamp((center_x / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
+    const float pointcloud_v = std::clamp((center_y / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+    const int pointcloud_x = std::clamp(static_cast<int>(pointcloud_u * static_cast<float>(width)), 0, width - 1);
+    const int pointcloud_y = std::clamp(static_cast<int>(pointcloud_v * static_cast<float>(height)), 0, height - 1);
+
+    std::vector<float> sample_xs;
+    std::vector<float> sample_ys;
+    std::vector<float> sample_zs;
+    sample_xs.reserve(81);
+    sample_ys.reserve(81);
+    sample_zs.reserve(81);
+
+    constexpr int SAMPLE_RADIUS = 4;
+    const auto* x_data = xs->data();
+    const auto* y_data = ys->data();
+    const auto* z_data = zs->data();
+    for (int y = std::max(0, pointcloud_y - SAMPLE_RADIUS); y <= std::min(height - 1, pointcloud_y + SAMPLE_RADIUS); ++y) {
+        for (int x = std::max(0, pointcloud_x - SAMPLE_RADIUS); x <= std::min(width - 1, pointcloud_x + SAMPLE_RADIUS); ++x) {
+            const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
+            const float px = x_data[index];
+            const float py = y_data[index];
+            const float pz = z_data[index];
+            if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz) || pz <= 0.0F) {
+                continue;
+            }
+            sample_xs.push_back(px);
+            sample_ys.push_back(py);
+            sample_zs.push_back(pz);
+        }
+    }
+
+    if (sample_zs.empty()) {
+        return std::nullopt;
+    }
+
+    return PickDetectionResult::ObjectPosition{
+        .x = median_value(sample_xs),
+        .y = median_value(sample_ys),
+        .z = median_value(sample_zs),
+        .sample_count = static_cast<int>(sample_zs.size()),
+        .pointcloud_x = pointcloud_x,
+        .pointcloud_y = pointcloud_y,
+    };
+}
+
+ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample) {
     if (downsample <= 0) {
         throw std::runtime_error("pointcloud downsample must be positive");
     }
@@ -292,8 +364,7 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
     };
 }
 
-ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample)
-{
+ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample) {
     if (entry.spec.type == meere::sensor::FrameType::PointCloud) {
         return cubeeye_pointcloud_payload(entry, pointcloud_downsample);
     }
@@ -329,16 +400,14 @@ ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_dow
 
 } // namespace
 
-std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value)
-{
+std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value) {
     std::vector<CubeEyeFrameSpec> specs;
     bool has_depth = false;
     bool has_pointcloud = false;
     for (const std::string& item : split_csv(value)) {
         const CubeEyeFrameSpec spec = parse_cubeeye_frame_name(item);
-        const auto duplicate = std::find_if(specs.begin(), specs.end(), [&](const CubeEyeFrameSpec& existing) {
-            return existing.type == spec.type;
-        });
+        const auto duplicate =
+            std::find_if(specs.begin(), specs.end(), [&](const CubeEyeFrameSpec& existing) { return existing.type == spec.type; });
         if (duplicate != specs.end()) {
             throw std::invalid_argument("duplicate CubeEye frame: " + item);
         }
@@ -355,8 +424,7 @@ std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value)
     return specs;
 }
 
-int cubeeye_frame_mask(std::span<const CubeEyeFrameSpec> specs)
-{
+int cubeeye_frame_mask(std::span<const CubeEyeFrameSpec> specs) {
     int mask = 0;
     for (const auto& spec : specs) {
         mask |= static_cast<int>(spec.type);
@@ -364,8 +432,7 @@ int cubeeye_frame_mask(std::span<const CubeEyeFrameSpec> specs)
     return mask;
 }
 
-std::string cubeeye_frame_label(meere::sensor::FrameType type)
-{
+std::string cubeeye_frame_label(meere::sensor::FrameType type) {
     switch (type) {
     case meere::sensor::FrameType::Depth:
         return "depth";
@@ -381,19 +448,16 @@ std::string cubeeye_frame_label(meere::sensor::FrameType type)
 }
 
 PickProcessor::PickProcessor(PickProcessorConfig config)
-    : config_(std::move(config)),
-      detector_(config_.detection_enabled ? catcheye::create_detector(config_.detector) : nullptr) {}
+    : config_(std::move(config)), detector_(config_.detection_enabled ? catcheye::create_detector(config_.detector) : nullptr) {}
 
-bool PickProcessor::initialize()
-{
+bool PickProcessor::initialize() {
     if (config_.detection_enabled && !detector_->initialize()) {
         return false;
     }
     return true;
 }
 
-PickProcessor::RoiSnapshot PickProcessor::roi_snapshot() const
-{
+PickProcessor::RoiSnapshot PickProcessor::roi_snapshot() const {
     std::lock_guard<std::mutex> lock(roi_mutex_);
     return RoiSnapshot{
         .enabled = config_.roi_enabled,
@@ -401,8 +465,7 @@ PickProcessor::RoiSnapshot PickProcessor::roi_snapshot() const
     };
 }
 
-PickProcessor::RoiSnapshot PickProcessor::pallet_roi_snapshot() const
-{
+PickProcessor::RoiSnapshot PickProcessor::pallet_roi_snapshot() const {
     std::lock_guard<std::mutex> lock(roi_mutex_);
     return RoiSnapshot{
         .enabled = config_.pallet_roi_enabled,
@@ -410,8 +473,7 @@ PickProcessor::RoiSnapshot PickProcessor::pallet_roi_snapshot() const
     };
 }
 
-bool PickProcessor::update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config)
-{
+bool PickProcessor::update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config) {
     const auto validation = catcheye::roi::validate_camera_roi_config(roi_config);
     if (!validation.valid) {
         return false;
@@ -423,8 +485,7 @@ bool PickProcessor::update_roi_config(const catcheye::roi::CameraRoiConfig& roi_
     return true;
 }
 
-bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config)
-{
+bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config) {
     const auto validation = catcheye::roi::validate_camera_roi_config(roi_config);
     if (!validation.valid) {
         return false;
@@ -436,11 +497,8 @@ bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfi
     return true;
 }
 
-PickDetectionFrame PickProcessor::process_detection_frame(
-    const catcheye::input::Frame& camera_frame,
-    const CubeEyeFrameSet&,
-    std::uint64_t frame_index)
-{
+PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input::Frame& camera_frame, const CubeEyeFrameSet& cubeeye_frames,
+                                                          std::uint64_t frame_index) {
     if (!config_.detection_enabled || !detector_) {
         throw std::runtime_error("pick detection pipeline is disabled");
     }
@@ -448,23 +506,26 @@ PickDetectionFrame PickProcessor::process_detection_frame(
     PickDetectionFrame output;
     output.frame_index = frame_index;
     const std::vector<catcheye::Detection> detections = detector_->detect(camera_frame);
+    const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(cubeeye_frames);
     output.detections.reserve(detections.size());
     for (const auto& detection : detections) {
+        std::optional<PickDetectionResult::ObjectPosition> position;
+        if (pointcloud_frame != nullptr) {
+            position = estimate_object_position(detection.box, camera_frame, *pointcloud_frame);
+        }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,
             .class_name = detector_->class_name(detection.class_id),
             .score = detection.score,
             .box = detection.box,
+            .position = position,
         });
     }
     return output;
 }
 
-PickViewerFrame PickProcessor::process_viewer_frame(
-    const std::optional<catcheye::input::Frame>& camera_frame,
-    const CubeEyeFrameSet& cubeeye_frames,
-    std::uint64_t frame_index) const
-{
+PickViewerFrame PickProcessor::process_viewer_frame(const std::optional<catcheye::input::Frame>& camera_frame,
+                                                    const CubeEyeFrameSet& cubeeye_frames, std::uint64_t frame_index) const {
     PickViewerFrame output;
     output.frame_index = frame_index;
     const RoiSnapshot roi = roi_snapshot();
@@ -483,38 +544,34 @@ PickViewerFrame PickProcessor::process_viewer_frame(
     return output;
 }
 
-void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& frame)
-{
-    oss << "\"detection_count\":" << frame.detections.size()
-        << ",\"detections\":[";
+void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& frame) {
+    oss << "\"detection_count\":" << frame.detections.size() << ",\"detections\":[";
     for (std::size_t i = 0; i < frame.detections.size(); ++i) {
         const auto& detection = frame.detections[i];
         if (i > 0) {
             oss << ',';
         }
-        oss << "{\"class_id\":" << detection.class_id
-            << ",\"class_name\":\"" << escape_json(detection.class_name) << "\""
-            << ",\"score\":" << detection.score
-            << ",\"box\":{\"x\":" << detection.box.x
-            << ",\"y\":" << detection.box.y
-            << ",\"width\":" << detection.box.width
-            << ",\"height\":" << detection.box.height
-            << "}}";
+        oss << "{\"class_id\":" << detection.class_id << ",\"class_name\":\"" << escape_json(detection.class_name) << "\""
+            << ",\"score\":" << detection.score << ",\"box\":{\"x\":" << detection.box.x << ",\"y\":" << detection.box.y
+            << ",\"width\":" << detection.box.width << ",\"height\":" << detection.box.height << "},\"position\":";
+        if (detection.position.has_value()) {
+            const auto& position = *detection.position;
+            oss << "{\"x\":" << position.x << ",\"y\":" << position.y << ",\"z\":" << position.z
+                << ",\"sample_count\":" << position.sample_count << ",\"pointcloud_x\":" << position.pointcloud_x
+                << ",\"pointcloud_y\":" << position.pointcloud_y << "}";
+        } else {
+            oss << "null";
+        }
+        oss << "}";
     }
     oss << "]";
 }
 
-std::string build_viewer_metadata(
-    const PickViewerFrame& frame,
-    bool viewer_only,
-    const PickDetectionFrame* detection_frame)
-{
+std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only, const PickDetectionFrame* detection_frame) {
     std::ostringstream oss;
     oss << "{\"type\":\"viewer_frame\","
-        << "\"viewer_only\":" << (viewer_only ? "true" : "false") << ','
-        << "\"frame_index\":" << frame.frame_index << ','
-        << "\"wall_timestamp_ms\":" << wall_clock_millis() << ','
-        << "\"roi_enabled\":" << (frame.roi_enabled ? "true" : "false") << ','
+        << "\"viewer_only\":" << (viewer_only ? "true" : "false") << ',' << "\"frame_index\":" << frame.frame_index << ','
+        << "\"wall_timestamp_ms\":" << wall_clock_millis() << ',' << "\"roi_enabled\":" << (frame.roi_enabled ? "true" : "false") << ','
         << "\"roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.roi_config, 0) << ','
         << "\"pallet_roi_enabled\":" << (frame.pallet_roi_enabled ? "true" : "false") << ','
         << "\"pallet_roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.pallet_roi_config, 0) << ',';
@@ -522,8 +579,7 @@ std::string build_viewer_metadata(
         append_detection_fields(oss, *detection_frame);
         oss << ',';
     }
-    oss
-        << "\"streams\":[";
+    oss << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
         const auto& payload = frame.payloads[i];
         if (i > 0) {
@@ -533,21 +589,15 @@ std::string build_viewer_metadata(
             << "\"name\":\"" << payload.name << "\","
             << "\"kind\":\"" << payload.kind << "\","
             << "\"encoding\":\"" << payload.encoding << "\","
-            << "\"payload_index\":" << i << ','
-            << "\"width\":" << payload.width << ','
-            << "\"height\":" << payload.height << ','
-            << "\"point_count\":" << payload.point_count << ','
-            << "\"stride\":" << payload.stride << ','
-            << "\"source_timestamp_ms\":" << payload.source_timestamp_ms << ','
-            << "\"payload_size\":" << payload.bytes.size()
-            << "}";
+            << "\"payload_index\":" << i << ',' << "\"width\":" << payload.width << ',' << "\"height\":" << payload.height << ','
+            << "\"point_count\":" << payload.point_count << ',' << "\"stride\":" << payload.stride << ','
+            << "\"source_timestamp_ms\":" << payload.source_timestamp_ms << ',' << "\"payload_size\":" << payload.bytes.size() << "}";
     }
     oss << "]}";
     return oss.str();
 }
 
-std::string build_detection_metadata(const PickDetectionFrame& frame)
-{
+std::string build_detection_metadata(const PickDetectionFrame& frame) {
     std::ostringstream oss;
     oss << "{\"viewer_only\":false,";
     append_detection_fields(oss, frame);
@@ -555,8 +605,7 @@ std::string build_detection_metadata(const PickDetectionFrame& frame)
     return oss.str();
 }
 
-std::vector<std::span<const std::uint8_t>> viewer_payload_spans(const PickViewerFrame& frame)
-{
+std::vector<std::span<const std::uint8_t>> viewer_payload_spans(const PickViewerFrame& frame) {
     std::vector<std::span<const std::uint8_t>> spans;
     spans.reserve(frame.payloads.size());
     for (const auto& payload : frame.payloads) {

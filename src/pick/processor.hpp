@@ -42,6 +42,15 @@ struct PickDetectionResult {
     std::string class_name;
     float score = 0.0F;
     catcheye::BoundingBox box{};
+    struct ObjectPosition {
+        float x = 0.0F;
+        float y = 0.0F;
+        float z = 0.0F;
+        int sample_count = 0;
+        int pointcloud_x = 0;
+        int pointcloud_y = 0;
+    };
+    std::optional<ObjectPosition> position;
 };
 
 struct PickDetectionFrame {
