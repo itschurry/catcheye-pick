@@ -16,6 +16,8 @@
 #include "CubeEyeBasicFrame.h"
 #include "CubeEyePointCloudFrame.h"
 #include "catcheye/input/pixel_format.hpp"
+#include "catcheye/roi/roi_repository.hpp"
+#include "catcheye/roi/roi_validation.hpp"
 
 namespace catcheye::pick {
 namespace {
@@ -357,6 +359,50 @@ bool PickProcessor::initialize()
     return true;
 }
 
+PickProcessor::RoiSnapshot PickProcessor::roi_snapshot() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return RoiSnapshot{
+        .enabled = config_.roi_enabled,
+        .config = config_.roi_config,
+    };
+}
+
+PickProcessor::RoiSnapshot PickProcessor::pallet_roi_snapshot() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return RoiSnapshot{
+        .enabled = config_.pallet_roi_enabled,
+        .config = config_.pallet_roi_config,
+    };
+}
+
+bool PickProcessor::update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config)
+{
+    const auto validation = catcheye::roi::validate_camera_roi_config(roi_config);
+    if (!validation.valid) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.roi_enabled = true;
+    config_.roi_config = roi_config;
+    return true;
+}
+
+bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config)
+{
+    const auto validation = catcheye::roi::validate_camera_roi_config(roi_config);
+    if (!validation.valid) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.pallet_roi_enabled = true;
+    config_.pallet_roi_config = roi_config;
+    return true;
+}
+
 PickViewerFrame PickProcessor::process_viewer_frame(
     const std::optional<catcheye::input::Frame>& camera_frame,
     const CubeEyeFrameSet& cubeeye_frames,
@@ -368,6 +414,12 @@ PickViewerFrame PickProcessor::process_viewer_frame(
 
     PickViewerFrame output;
     output.frame_index = frame_index;
+    const RoiSnapshot roi = roi_snapshot();
+    const RoiSnapshot pallet_roi = pallet_roi_snapshot();
+    output.roi_enabled = roi.enabled;
+    output.roi_config = roi.config;
+    output.pallet_roi_enabled = pallet_roi.enabled;
+    output.pallet_roi_config = pallet_roi.config;
     output.payloads.reserve(1U + cubeeye_frames.frames.size());
     if (camera_frame.has_value()) {
         output.payloads.push_back(camera_payload(*camera_frame));
@@ -385,6 +437,10 @@ std::string build_viewer_metadata(const PickViewerFrame& frame)
         << "\"viewer_only\":true,"
         << "\"frame_index\":" << frame.frame_index << ','
         << "\"wall_timestamp_ms\":" << wall_clock_millis() << ','
+        << "\"roi_enabled\":" << (frame.roi_enabled ? "true" : "false") << ','
+        << "\"roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.roi_config, 0) << ','
+        << "\"pallet_roi_enabled\":" << (frame.pallet_roi_enabled ? "true" : "false") << ','
+        << "\"pallet_roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.pallet_roi_config, 0) << ','
         << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
         const auto& payload = frame.payloads[i];

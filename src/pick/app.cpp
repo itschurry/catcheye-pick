@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -18,8 +19,11 @@
 #include "CubeEyeCamera.h"
 #include "CubeEyeSource.h"
 #include "catcheye/input/frame_source.hpp"
+#include "catcheye/roi/roi_repository.hpp"
+#include "catcheye/roi/roi_validation.hpp"
 #include "catcheye/transport/websocket_publisher.hpp"
 #include "pick/cubeeye_camera.hpp"
+#include "pick/http_api_server.hpp"
 #include "pick/processor.hpp"
 
 namespace catcheye::pick {
@@ -40,7 +44,10 @@ void print_usage() {
               << "  --camera-input <mode>     Camera input: rgb-cubeeye | rgb | cubeeye\n"
               << "  --viewer-only             Start selected camera input without detection\n"
               << "  --ws [port]               Publish viewer-only frames over WebSocket\n"
+              << "  --http-port <port>        HTTP API port (default: 8090)\n"
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
+              << "  --roi <path>              Person ROI config path\n"
+              << "  --pallet-roi <path>       Pallet ROI config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
               << "  --cubeeye-camera-fps <fps>  CubeEye S111D camera framerate: 7 | 15 | 30\n"
               << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
@@ -104,6 +111,26 @@ const char* publisher_name(PublisherType type) {
 bool is_supported_cubeeye_camera_fps(int fps)
 {
     return fps == 7 || fps == 15 || fps == 30;
+}
+
+std::string resolve_default_config_path(const char* executable_path, std::string_view filename)
+{
+    const std::filesystem::path executable = executable_path ? std::filesystem::path(executable_path) : std::filesystem::path{};
+    const std::filesystem::path install_root = executable.has_parent_path() ? executable.parent_path().parent_path() : std::filesystem::current_path();
+    return (install_root / "config" / filename).string();
+}
+
+catcheye::roi::CameraRoiConfig load_roi_config(const std::string& path)
+{
+    const auto parse_result = catcheye::roi::RoiRepository::load_from_file(path);
+    if (!parse_result.success) {
+        throw std::runtime_error("failed to load ROI config: " + path);
+    }
+    const auto validation = catcheye::roi::validate_camera_roi_config(parse_result.config);
+    if (!validation.valid) {
+        throw std::runtime_error("ROI config failed validation: " + path);
+    }
+    return parse_result.config;
 }
 
 class LatestViewerFramePublisher {
@@ -228,9 +255,20 @@ int run_viewer_only(AppBootstrap bootstrap) {
         cubeeye->open();
     }
 
+    const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
+    const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
     PickProcessor processor(std::move(bootstrap.processor_config));
     if (!processor.initialize()) {
         throw std::runtime_error("failed to initialize pick processor");
+    }
+    HttpApiServer http_api_server(
+        bootstrap.http_api_server_config,
+        http_roi_config_path,
+        http_pallet_roi_config_path,
+        &processor,
+        cubeeye ? &*cubeeye : nullptr);
+    if (!http_api_server.start()) {
+        throw std::runtime_error("failed to start HTTP API server");
     }
 
     catcheye::transport::WebSocketPublisher websocket(bootstrap.websocket_publisher_config);
@@ -354,12 +392,27 @@ AppOptions parse_app_options(int argc, char** argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 options.websocket_port = std::stoi(argv[++i]);
             }
+        } else if (arg == "--http-port") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--http-port requires a value");
+            }
+            options.http_port = std::stoi(argv[++i]);
         } else if (arg == "--camera-pipeline") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--camera-pipeline requires a value");
             }
             options.camera_pipeline = argv[++i];
             options.camera_pipeline_set = true;
+        } else if (arg == "--roi") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--roi requires a value");
+            }
+            options.roi_config_path = argv[++i];
+        } else if (arg == "--pallet-roi") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--pallet-roi requires a value");
+            }
+            options.pallet_roi_config_path = argv[++i];
         } else if (arg == "--cubeeye-frames") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--cubeeye-frames requires a value");
@@ -393,6 +446,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     if (options.websocket_port <= 0) {
         throw std::invalid_argument("WebSocket port must be a positive integer");
     }
+    if (options.http_port <= 0) {
+        throw std::invalid_argument("HTTP port must be a positive integer");
+    }
     if (options.pointcloud_downsample <= 0) {
         throw std::invalid_argument("--pointcloud-downsample must be a positive integer");
     }
@@ -424,16 +480,27 @@ AppOptions parse_app_options(int argc, char** argv) {
     return options;
 }
 
-AppBootstrap build_app_bootstrap(const AppOptions& options) {
+AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executable_path) {
     AppBootstrap bootstrap;
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
     bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
+    bootstrap.processor_config.roi_config_path = options.roi_config_path.empty()
+        ? resolve_default_config_path(executable_path, "roi_cam_default.json")
+        : options.roi_config_path;
+    bootstrap.processor_config.pallet_roi_config_path = options.pallet_roi_config_path.empty()
+        ? resolve_default_config_path(executable_path, "pallet_roi_cam_default.json")
+        : options.pallet_roi_config_path;
+    bootstrap.processor_config.roi_config = load_roi_config(bootstrap.processor_config.roi_config_path);
+    bootstrap.processor_config.roi_enabled = true;
+    bootstrap.processor_config.pallet_roi_config = load_roi_config(bootstrap.processor_config.pallet_roi_config_path);
+    bootstrap.processor_config.pallet_roi_enabled = true;
     if (uses_cubeeye(options.camera_input_mode)) {
         bootstrap.processor_config.cubeeye_frames = parse_cubeeye_frames(options.cubeeye_frames);
     }
     bootstrap.publisher_type = options.publisher_type;
     bootstrap.websocket_publisher_config.port = options.websocket_port;
+    bootstrap.http_api_server_config.port = options.http_port;
 
     if (uses_rgb_camera(options.camera_input_mode)) {
         const std::string camera_pipeline = options.camera_pipeline.empty() ? std::string(DEFAULT_CAMERA_PIPELINE) : options.camera_pipeline;
@@ -467,7 +534,7 @@ int run_app(int argc, char** argv) {
         return list_cubeeye_sources();
     }
 
-    AppBootstrap bootstrap = build_app_bootstrap(options);
+    AppBootstrap bootstrap = build_app_bootstrap(options, argv[0]);
     std::cerr << "catcheye-pick starting (mode='" << describe_runtime_mode(options) << "', publisher='"
               << publisher_name(bootstrap.publisher_type) << "'";
     if (uses_cubeeye(options.camera_input_mode)) {

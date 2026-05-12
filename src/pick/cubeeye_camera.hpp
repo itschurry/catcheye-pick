@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "CubeEyeCamera.h"
@@ -35,6 +36,9 @@ class CubeEyeCameraSession final {
     void open();
     CubeEyeFrameSet read();
     void close();
+    std::optional<std::string> properties_json() const;
+    bool set_bool_property(std::string_view key, bool value);
+    bool set_int_property(std::string_view key, int value);
 
   private:
     class CaptureSink final : public meere::sensor::sink {
@@ -62,6 +66,7 @@ class CubeEyeCameraSession final {
     int camera_fps_ = 0;
     CaptureSink capture_;
     meere::sensor::sptr_camera camera_;
+    mutable std::mutex camera_mutex_;
 };
 
 int list_cubeeye_sources();

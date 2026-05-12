@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "catcheye/input/frame.hpp"
+#include "catcheye/roi/camera_roi_config.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/processor_config.hpp"
 
@@ -27,6 +29,10 @@ struct ViewerPayload {
 struct PickViewerFrame {
     std::uint64_t frame_index = 0;
     std::vector<ViewerPayload> payloads;
+    bool roi_enabled = false;
+    catcheye::roi::CameraRoiConfig roi_config;
+    bool pallet_roi_enabled = false;
+    catcheye::roi::CameraRoiConfig pallet_roi_config;
 };
 
 class PickProcessor final {
@@ -38,8 +44,19 @@ class PickProcessor final {
         const std::optional<catcheye::input::Frame>& camera_frame,
         const CubeEyeFrameSet& cubeeye_frames,
         std::uint64_t frame_index) const;
+    bool update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
+    bool update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
 
   private:
+    struct RoiSnapshot {
+        bool enabled = false;
+        catcheye::roi::CameraRoiConfig config;
+    };
+
+    RoiSnapshot roi_snapshot() const;
+    RoiSnapshot pallet_roi_snapshot() const;
+
+    mutable std::mutex roi_mutex_;
     PickProcessorConfig config_;
 };
 

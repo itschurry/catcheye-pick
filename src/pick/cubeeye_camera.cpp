@@ -1,8 +1,11 @@
 #include "pick/cubeeye_camera.hpp"
 
+#include <array>
 #include <chrono>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -11,6 +14,32 @@ namespace {
 
 constexpr int CUBEEYE_FRAME_WAIT_MS = 5000;
 constexpr std::string_view CUBEEYE_FRAMERATE_PROPERTY = "framerate";
+
+bool is_bool_property(std::string_view key)
+{
+    return key == "auto_exposure" || key == "illumination";
+}
+
+bool is_int_property(std::string_view key)
+{
+    return key == "framerate" || key == "depth_range_min" || key == "depth_range_max";
+}
+
+std::string property_json_pair(const meere::sensor::sptr_camera& camera, std::string_view key)
+{
+    const auto [result, property] = camera->getProperty(std::string(key));
+    if (result != meere::sensor::result::success || !property) {
+        throw std::runtime_error("failed to get CubeEye property: " + std::string(key));
+    }
+    std::ostringstream oss;
+    oss << "\"" << key << "\":";
+    if (is_bool_property(key)) {
+        oss << (property->asBoolean(false) ? "true" : "false");
+    } else {
+        oss << property->asInt32u(0);
+    }
+    return oss.str();
+}
 
 } // namespace
 
@@ -132,6 +161,63 @@ void CubeEyeCameraSession::open()
         }
         std::cerr << "CubeEye framerate set to " << camera_fps_ << " fps\n";
     }
+}
+
+std::optional<std::string> CubeEyeCameraSession::properties_json() const
+{
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return std::nullopt;
+    }
+
+    std::ostringstream oss;
+    oss << "{";
+    const std::array<std::string_view, 5> keys{
+        "framerate",
+        "auto_exposure",
+        "illumination",
+        "depth_range_min",
+        "depth_range_max",
+    };
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << property_json_pair(camera_, keys[i]);
+    }
+    oss << "}";
+    return oss.str();
+}
+
+bool CubeEyeCameraSession::set_bool_property(std::string_view key, bool value)
+{
+    if (!is_bool_property(key)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return false;
+    }
+    const auto property = meere::sensor::make_property_bool(std::string(key), value);
+    return property && camera_->setProperty(property) == meere::sensor::result::success;
+}
+
+bool CubeEyeCameraSession::set_int_property(std::string_view key, int value)
+{
+    if (!is_int_property(key)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return false;
+    }
+    meere::sensor::sptr_property property;
+    if (key == "framerate") {
+        property = meere::sensor::make_property_8u(std::string(key), static_cast<meere::sensor::int8u>(value));
+    } else {
+        property = meere::sensor::make_property_16u(std::string(key), static_cast<meere::sensor::int16u>(value));
+    }
+    return property && camera_->setProperty(property) == meere::sensor::result::success;
 }
 
 CubeEyeFrameSet CubeEyeCameraSession::read()
