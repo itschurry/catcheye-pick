@@ -251,6 +251,81 @@ private:
     std::exception_ptr error_;
 };
 
+class LatestCubeEyeFrameReader {
+public:
+    explicit LatestCubeEyeFrameReader(CubeEyeCameraSession& cubeeye)
+        : cubeeye_(cubeeye)
+        , thread_(&LatestCubeEyeFrameReader::run, this)
+    {}
+
+    ~LatestCubeEyeFrameReader()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        condition_.notify_all();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    CubeEyeFrameSet latest()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [&] {
+            return latest_.has_value() || error_ || stopping_;
+        });
+        if (error_) {
+            std::rethrow_exception(error_);
+        }
+        if (!latest_) {
+            throw std::runtime_error("CubeEye frame reader stopped before receiving frames");
+        }
+        return *latest_;
+    }
+
+private:
+    void run()
+    {
+        try {
+            while (true) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
+                }
+
+                CubeEyeFrameSet frame_set = cubeeye_.read();
+
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
+                    latest_ = std::move(frame_set);
+                }
+                condition_.notify_all();
+            }
+        } catch (...) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                error_ = std::current_exception();
+            }
+            condition_.notify_all();
+        }
+    }
+
+    CubeEyeCameraSession& cubeeye_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::optional<CubeEyeFrameSet> latest_;
+    bool stopping_{false};
+    std::exception_ptr error_;
+};
+
 std::exception_ptr worker_error_snapshot(std::mutex& error_mutex, const std::exception_ptr& worker_error)
 {
     std::lock_guard<std::mutex> lock(error_mutex);
@@ -409,6 +484,10 @@ int run_pick_detection(AppBootstrap bootstrap)
         cubeeye.emplace(std::move(cubeeye_frame_specs), cubeeye_camera_fps);
         cubeeye->open();
     }
+    std::optional<LatestCubeEyeFrameReader> cubeeye_reader;
+    if (cubeeye) {
+        cubeeye_reader.emplace(*cubeeye);
+    }
 
     HttpApiServer http_api_server(
         bootstrap.http_api_server_config,
@@ -440,8 +519,8 @@ int run_pick_detection(AppBootstrap bootstrap)
         }
 
         CubeEyeFrameSet cubeeye_frames;
-        if (cubeeye) {
-            cubeeye_frames = cubeeye->read();
+        if (cubeeye_reader) {
+            cubeeye_frames = cubeeye_reader->latest();
         }
 
         PickDetectionFrame detection_frame = processor.process_detection_frame(frame, cubeeye_frames, ++frame_index);

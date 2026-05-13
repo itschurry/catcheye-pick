@@ -301,6 +301,7 @@ install(PROGRAMS
     scripts/run-all-hailo.sh
     scripts/run-all.sh
     scripts/run-pcl.sh
+    scripts/run-rgb-hailo.sh
     scripts/run-rgb-ncnn.sh
     scripts/run-rgb-pcl.sh
     scripts/run-rgb.sh
