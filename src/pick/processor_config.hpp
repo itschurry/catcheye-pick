@@ -16,11 +16,17 @@ struct CubeEyeFrameSpec {
     meere::sensor::FrameType type = meere::sensor::FrameType::Unknown;
 };
 
+struct RgbCubeEyeOffset {
+    float u = 0.0F;
+    float v = 0.40F;
+};
+
 struct PickProcessorConfig {
     bool detection_enabled = true;
     catcheye::DetectorFactoryConfig detector;
     std::vector<CubeEyeFrameSpec> cubeeye_frames;
     int pointcloud_downsample = 4;
+    RgbCubeEyeOffset rgb_cubeeye_offset;
     bool roi_enabled = false;
     std::string roi_config_path;
     catcheye::roi::CameraRoiConfig roi_config;

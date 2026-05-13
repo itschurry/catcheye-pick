@@ -38,6 +38,8 @@ struct AppOptions {
     std::string pallet_roi_config_path;
     int cubeeye_camera_fps = 0;
     int pointcloud_downsample = 4;
+    float rgb_cubeeye_offset_u = 0.0F;
+    float rgb_cubeeye_offset_v = 0.40F;
     int num_threads = 2;
     bool camera_pipeline_set = false;
     bool cubeeye_frames_set = false;

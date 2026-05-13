@@ -76,8 +76,10 @@ class PickProcessor final {
         const std::optional<catcheye::input::Frame>& camera_frame,
         const CubeEyeFrameSet& cubeeye_frames,
         std::uint64_t frame_index) const;
+    RgbCubeEyeOffset rgb_cubeeye_offset() const;
     bool update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
+    bool update_rgb_cubeeye_offset(RgbCubeEyeOffset offset);
 
   private:
     struct RoiSnapshot {

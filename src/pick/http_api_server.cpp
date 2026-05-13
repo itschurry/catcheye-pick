@@ -3,6 +3,7 @@
 #include <cctype>
 #include <exception>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -93,6 +94,37 @@ bool parse_value_body(std::string_view body, JsonValue& output)
     }
 }
 
+bool parse_float_field(std::string_view body, std::string_view key, float& output)
+{
+    const std::string quoted_key = "\"" + std::string(key) + "\"";
+    const std::size_t key_pos = body.find(quoted_key);
+    if (key_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t colon_pos = body.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t end_pos = body.find_first_of(",}", colon_pos + 1U);
+    const std::string value_text = trim(std::string(body.substr(
+        colon_pos + 1U,
+        end_pos == std::string_view::npos ? std::string_view::npos : end_pos - colon_pos - 1U)));
+    try {
+        std::size_t consumed = 0;
+        output = std::stof(value_text, &consumed);
+        return consumed == value_text.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string rgb_cubeeye_offset_json(RgbCubeEyeOffset offset)
+{
+    std::ostringstream oss;
+    oss << "{\"u\":" << offset.u << ",\"v\":" << offset.v << '}';
+    return oss.str();
+}
+
 } // namespace
 
 HttpApiServer::HttpApiServer(
@@ -151,6 +183,16 @@ bool HttpApiServer::start()
         const std::string key = request.path.substr(property_prefix_size);
         if (request.method == "PUT") {
             return handle_put_cubeeye_property(key, request.body);
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/rgb-cubeeye-offset", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return handle_get_rgb_cubeeye_offset();
+        }
+        if (request.method == "PUT") {
+            return handle_put_rgb_cubeeye_offset(request.body);
         }
         return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
     });
@@ -221,6 +263,23 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const st
         return {500, "Internal Server Error", catcheye::http::json_error_body("failed to set CubeEye property")};
     }
     return handle_get_cubeeye_properties();
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_cubeeye_offset() const
+{
+    return {200, "OK", rgb_cubeeye_offset_json(processor_->rgb_cubeeye_offset())};
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_offset(const std::string& body) const
+{
+    RgbCubeEyeOffset offset;
+    if (!parse_float_field(body, "u", offset.u) || !parse_float_field(body, "v", offset.v)) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye offset JSON body")};
+    }
+    if (!processor_->update_rgb_cubeeye_offset(offset)) {
+        return {400, "Bad Request", catcheye::http::json_error_body("RGB CubeEye offset out of range")};
+    }
+    return handle_get_rgb_cubeeye_offset();
 }
 
 } // namespace catcheye::pick

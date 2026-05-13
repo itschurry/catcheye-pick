@@ -1,6 +1,7 @@
 #include "pick/processor.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -77,6 +78,24 @@ bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfi
     return true;
 }
 
+RgbCubeEyeOffset PickProcessor::rgb_cubeeye_offset() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return config_.rgb_cubeeye_offset;
+}
+
+bool PickProcessor::update_rgb_cubeeye_offset(RgbCubeEyeOffset offset)
+{
+    if (!std::isfinite(offset.u) || !std::isfinite(offset.v) || offset.u < -1.0F || offset.u > 1.0F || offset.v < -1.0F ||
+        offset.v > 1.0F) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.rgb_cubeeye_offset = offset;
+    return true;
+}
+
 PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input::Frame& camera_frame,
                                                           const CubeEyeFrameSet& cubeeye_frames,
                                                           std::uint64_t frame_index)
@@ -89,11 +108,12 @@ PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input:
     output.frame_index = frame_index;
     const std::vector<catcheye::Detection> detections = detector_->detect(camera_frame);
     const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(cubeeye_frames);
+    const RgbCubeEyeOffset rgb_cubeeye_offset = this->rgb_cubeeye_offset();
     output.detections.reserve(detections.size());
     for (const auto& detection : detections) {
         std::optional<PickDetectionResult::ObjectPosition> position;
         if (pointcloud_frame != nullptr) {
-            position = estimate_object_position(detection.box, camera_frame, *pointcloud_frame);
+            position = estimate_object_position(detection.box, camera_frame, *pointcloud_frame, rgb_cubeeye_offset);
         }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,

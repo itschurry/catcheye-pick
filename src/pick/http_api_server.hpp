@@ -31,6 +31,8 @@ class HttpApiServer final {
   private:
     catcheye::http::HttpResponse handle_get_cubeeye_properties() const;
     catcheye::http::HttpResponse handle_put_cubeeye_property(const std::string& key, const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_rgb_cubeeye_offset() const;
+    catcheye::http::HttpResponse handle_put_rgb_cubeeye_offset(const std::string& body) const;
 
     HttpApiServerConfig config_;
     std::string roi_config_path_;

@@ -6,12 +6,14 @@
 #include "catcheye/input/frame.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/processor.hpp"
+#include "pick/processor_config.hpp"
 
 namespace catcheye::pick {
 
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(
     const catcheye::BoundingBox& box,
     const catcheye::input::Frame& camera_frame,
-    const CubeEyeFrameEntry& pointcloud_entry);
+    const CubeEyeFrameEntry& pointcloud_entry,
+    RgbCubeEyeOffset rgb_cubeeye_offset);
 
 } // namespace catcheye::pick

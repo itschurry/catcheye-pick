@@ -11,9 +11,6 @@
 namespace catcheye::pick {
 namespace {
 
-constexpr float RGB_TO_CUBEEYE_OFFSET_U = 0.00F;
-constexpr float RGB_TO_CUBEEYE_OFFSET_V = 0.40F;
-
 struct PointSample {
     float x = 0.0F;
     float y = 0.0F;
@@ -32,7 +29,8 @@ float percentile_value(std::vector<float>& values, float percentile)
 
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(const catcheye::BoundingBox& box,
                                                                             const catcheye::input::Frame& camera_frame,
-                                                                            const CubeEyeFrameEntry& pointcloud_entry)
+                                                                            const CubeEyeFrameEntry& pointcloud_entry,
+                                                                            RgbCubeEyeOffset rgb_cubeeye_offset)
 {
     const auto pointcloud = meere::sensor::frame_cast_pcl32f(pointcloud_entry.frame);
     if (!pointcloud || !pointcloud->frameDataX() || !pointcloud->frameDataY() || !pointcloud->frameDataZ()) {
@@ -55,16 +53,16 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
 
     const float center_x = box.x + (box.width * 0.5F);
     const float center_y = box.y + (box.height * 0.5F);
-    const float pointcloud_u = std::clamp((center_x / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
-    const float pointcloud_v = std::clamp((center_y / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+    const float pointcloud_u = std::clamp((center_x / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
+    const float pointcloud_v = std::clamp((center_y / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
     const int pointcloud_x = std::clamp(static_cast<int>(pointcloud_u * static_cast<float>(width)), 0, width - 1);
     const int pointcloud_y = std::clamp(static_cast<int>(pointcloud_v * static_cast<float>(height)), 0, height - 1);
 
-    const float left_u = std::clamp((box.x / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
-    const float top_v = std::clamp((box.y / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
-    const float right_u = std::clamp(((box.x + box.width) / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
+    const float left_u = std::clamp((box.x / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
+    const float top_v = std::clamp((box.y / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
+    const float right_u = std::clamp(((box.x + box.width) / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
     const float bottom_v =
-        std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+        std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
     const int min_px = std::clamp(static_cast<int>(std::floor(std::min(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
     const int max_px = std::clamp(static_cast<int>(std::ceil(std::max(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
     const int min_py = std::clamp(static_cast<int>(std::floor(std::min(top_v, bottom_v) * static_cast<float>(height))), 0, height - 1);
