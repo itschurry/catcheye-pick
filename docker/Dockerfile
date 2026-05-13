@@ -72,7 +72,12 @@ RUN set -eux; \
       'export CMAKE_PREFIX_PATH=/usr/local:/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}' \
       'export PKG_CONFIG_PATH=/usr/local/lib/aarch64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}' \
       'export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}' \
-      >> ~/.bashrc
+      >> ~/.bashrc; \
+    printf '%s\n' \
+      'alias cm="cmake -S . -B build/release-hailo -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release -DCATCHEYE_VISION_DETECTION_ENABLE_HAILO=ON && cmake --build build/release-hailo --config Release -- -j $(nproc) && ln -sf $(realpath build/release-hailo/compile_commands.json) build/compile_commands.json"' \
+      'alias ci="rm -rf install/release-hailo && cmake --install build/release-hailo --prefix install/release-hailo"' \
+      'alias cc="rm -rf build install && find log -mindepth 1 ! -name .gitkeep -delete"' \
+      > ~/.bash_aliases
 
 # Raspberry Pi libcamera, built natively inside the arm64 container.
 RUN set -eux; \
