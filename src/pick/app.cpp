@@ -26,6 +26,7 @@
 #include "pick/cubeeye_camera.hpp"
 #include "pick/http_api_server.hpp"
 #include "pick/processor.hpp"
+#include "pick/viewer_metadata.hpp"
 
 namespace catcheye::pick {
 namespace {
