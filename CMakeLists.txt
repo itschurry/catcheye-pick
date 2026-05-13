@@ -298,6 +298,7 @@ install(DIRECTORY config
 )
 
 install(PROGRAMS
+    scripts/run-all-hailo.sh
     scripts/run-all.sh
     scripts/run-pcl.sh
     scripts/run-rgb-ncnn.sh

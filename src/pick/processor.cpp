@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -233,10 +234,17 @@ const CubeEyeFrameEntry* find_pointcloud_frame(const CubeEyeFrameSet& frame_set)
     return it == frame_set.frames.end() ? nullptr : &*it;
 }
 
-float median_value(std::vector<float>& values) {
-    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2U);
-    std::nth_element(values.begin(), middle, values.end());
-    return *middle;
+struct PointSample {
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+};
+
+float percentile_value(std::vector<float>& values, float percentile) {
+    const auto index = static_cast<std::size_t>(std::clamp(percentile, 0.0F, 1.0F) * static_cast<float>(values.size() - 1U));
+    const auto it = values.begin() + static_cast<std::ptrdiff_t>(index);
+    std::nth_element(values.begin(), it, values.end());
+    return *it;
 }
 
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(const catcheye::BoundingBox& box,
@@ -268,19 +276,24 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
     const int pointcloud_x = std::clamp(static_cast<int>(pointcloud_u * static_cast<float>(width)), 0, width - 1);
     const int pointcloud_y = std::clamp(static_cast<int>(pointcloud_v * static_cast<float>(height)), 0, height - 1);
 
-    std::vector<float> sample_xs;
-    std::vector<float> sample_ys;
-    std::vector<float> sample_zs;
-    sample_xs.reserve(81);
-    sample_ys.reserve(81);
-    sample_zs.reserve(81);
+    const float left_u = std::clamp((box.x / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
+    const float top_v = std::clamp((box.y / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+    const float right_u = std::clamp(((box.x + box.width) / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
+    const float bottom_v = std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+    const int min_px = std::clamp(static_cast<int>(std::floor(std::min(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
+    const int max_px = std::clamp(static_cast<int>(std::ceil(std::max(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
+    const int min_py = std::clamp(static_cast<int>(std::floor(std::min(top_v, bottom_v) * static_cast<float>(height))), 0, height - 1);
+    const int max_py = std::clamp(static_cast<int>(std::ceil(std::max(top_v, bottom_v) * static_cast<float>(height))), 0, height - 1);
 
-    constexpr int SAMPLE_RADIUS = 4;
+    std::vector<PointSample> samples;
+    std::vector<float> sample_zs;
+    samples.reserve(static_cast<std::size_t>(std::max(0, max_px - min_px + 1)) * static_cast<std::size_t>(std::max(0, max_py - min_py + 1)));
+
     const auto* x_data = xs->data();
     const auto* y_data = ys->data();
     const auto* z_data = zs->data();
-    for (int y = std::max(0, pointcloud_y - SAMPLE_RADIUS); y <= std::min(height - 1, pointcloud_y + SAMPLE_RADIUS); ++y) {
-        for (int x = std::max(0, pointcloud_x - SAMPLE_RADIUS); x <= std::min(width - 1, pointcloud_x + SAMPLE_RADIUS); ++x) {
+    for (int y = min_py; y <= max_py; ++y) {
+        for (int x = min_px; x <= max_px; ++x) {
             const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
             const float px = x_data[index];
             const float py = y_data[index];
@@ -288,8 +301,7 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
             if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz) || pz <= 0.0F) {
                 continue;
             }
-            sample_xs.push_back(px);
-            sample_ys.push_back(py);
+            samples.push_back(PointSample{.x = px, .y = py, .z = pz});
             sample_zs.push_back(pz);
         }
     }
@@ -298,13 +310,52 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
         return std::nullopt;
     }
 
+    const float min_depth = percentile_value(sample_zs, 0.10F);
+    const float max_depth = percentile_value(sample_zs, 0.90F);
+    float sum_x = 0.0F;
+    float sum_y = 0.0F;
+    float sum_z = 0.0F;
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float min_z = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
+    float max_z = std::numeric_limits<float>::lowest();
+    int filtered_count = 0;
+    for (const auto& sample : samples) {
+        if (sample.z < min_depth || sample.z > max_depth) {
+            continue;
+        }
+        sum_x += sample.x;
+        sum_y += sample.y;
+        sum_z += sample.z;
+        min_x = std::min(min_x, sample.x);
+        min_y = std::min(min_y, sample.y);
+        min_z = std::min(min_z, sample.z);
+        max_x = std::max(max_x, sample.x);
+        max_y = std::max(max_y, sample.y);
+        max_z = std::max(max_z, sample.z);
+        ++filtered_count;
+    }
+
+    if (filtered_count == 0) {
+        return std::nullopt;
+    }
+
+    const float inv_count = 1.0F / static_cast<float>(filtered_count);
     return PickDetectionResult::ObjectPosition{
-        .x = median_value(sample_xs),
-        .y = median_value(sample_ys),
-        .z = median_value(sample_zs),
-        .sample_count = static_cast<int>(sample_zs.size()),
+        .x = sum_x * inv_count,
+        .y = sum_y * inv_count,
+        .z = sum_z * inv_count,
+        .sample_count = filtered_count,
         .pointcloud_x = pointcloud_x,
         .pointcloud_y = pointcloud_y,
+        .min_x = min_x,
+        .min_y = min_y,
+        .min_z = min_z,
+        .max_x = max_x,
+        .max_y = max_y,
+        .max_z = max_z,
     };
 }
 
@@ -558,7 +609,9 @@ void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& 
             const auto& position = *detection.position;
             oss << "{\"x\":" << position.x << ",\"y\":" << position.y << ",\"z\":" << position.z
                 << ",\"sample_count\":" << position.sample_count << ",\"pointcloud_x\":" << position.pointcloud_x
-                << ",\"pointcloud_y\":" << position.pointcloud_y << "}";
+                << ",\"pointcloud_y\":" << position.pointcloud_y
+                << ",\"bbox3d\":{\"min_x\":" << position.min_x << ",\"min_y\":" << position.min_y << ",\"min_z\":" << position.min_z
+                << ",\"max_x\":" << position.max_x << ",\"max_y\":" << position.max_y << ",\"max_z\":" << position.max_z << "}}";
         } else {
             oss << "null";
         }

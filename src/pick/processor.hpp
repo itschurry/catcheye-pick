@@ -49,6 +49,12 @@ struct PickDetectionResult {
         int sample_count = 0;
         int pointcloud_x = 0;
         int pointcloud_y = 0;
+        float min_x = 0.0F;
+        float min_y = 0.0F;
+        float min_z = 0.0F;
+        float max_x = 0.0F;
+        float max_y = 0.0F;
+        float max_z = 0.0F;
     };
     std::optional<ObjectPosition> position;
 };
