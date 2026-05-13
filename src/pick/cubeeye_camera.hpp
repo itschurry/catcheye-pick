@@ -22,6 +22,7 @@ struct CubeEyeFrameEntry {
 };
 
 struct CubeEyeFrameSet {
+    std::uint64_t sequence = 0;
     std::vector<CubeEyeFrameEntry> frames;
 };
 

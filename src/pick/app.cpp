@@ -183,10 +183,15 @@ public:
 
     void publish(std::string source_key, PickViewerFrame frame)
     {
+        publish_with_metadata(std::move(source_key), build_viewer_metadata(frame), std::move(frame));
+    }
+
+    void publish_with_metadata(std::string source_key, std::string metadata, PickViewerFrame frame)
+    {
         throw_if_failed();
         ViewerPacket packet{
             .source_key = std::move(source_key),
-            .metadata = build_viewer_metadata(frame),
+            .metadata = std::move(metadata),
             .frame = std::move(frame),
         };
         {
@@ -342,14 +347,14 @@ int run_viewer_only(AppBootstrap bootstrap) {
     const bool rgb_camera_enabled = bootstrap.camera_source != nullptr;
     const bool cubeeye_enabled = !bootstrap.processor_config.cubeeye_frames.empty();
 
-    if (rgb_camera_enabled && !bootstrap.camera_source->open()) {
-        throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
-    }
-
     std::optional<CubeEyeCameraSession> cubeeye;
     if (cubeeye_enabled) {
         cubeeye.emplace(bootstrap.processor_config.cubeeye_frames, bootstrap.cubeeye_camera_fps);
         cubeeye->open();
+    }
+
+    if (rgb_camera_enabled && !bootstrap.camera_source->open()) {
+        throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
     }
 
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
@@ -471,13 +476,6 @@ int run_pick_detection(AppBootstrap bootstrap)
     std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
     const int cubeeye_camera_fps = bootstrap.cubeeye_camera_fps;
     PickProcessor processor(std::move(bootstrap.processor_config));
-    if (!processor.initialize()) {
-        throw std::runtime_error("failed to initialize pick processor");
-    }
-
-    if (!bootstrap.camera_source->open()) {
-        throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
-    }
 
     std::optional<CubeEyeCameraSession> cubeeye;
     if (!cubeeye_frame_specs.empty()) {
@@ -487,6 +485,14 @@ int run_pick_detection(AppBootstrap bootstrap)
     std::optional<LatestCubeEyeFrameReader> cubeeye_reader;
     if (cubeeye) {
         cubeeye_reader.emplace(*cubeeye);
+    }
+
+    if (!bootstrap.camera_source->open()) {
+        throw std::runtime_error("failed to open Camera Module 3 gstreamer pipeline");
+    }
+
+    if (!processor.initialize()) {
+        throw std::runtime_error("failed to initialize pick processor");
     }
 
     HttpApiServer http_api_server(
@@ -500,15 +506,22 @@ int run_pick_detection(AppBootstrap bootstrap)
     }
 
     std::optional<catcheye::transport::WebSocketPublisher> websocket;
+    std::optional<LatestViewerFramePublisher> async_publisher;
     if (bootstrap.publisher_type == PublisherType::WebSocket) {
         websocket.emplace(bootstrap.websocket_publisher_config);
         if (!websocket->start()) {
             throw std::runtime_error("failed to start WebSocket publisher");
         }
+        async_publisher.emplace(*websocket);
     }
 
     std::uint64_t frame_index = 0;
+    std::uint64_t published_cubeeye_sequence = 0;
     while (true) {
+        if (async_publisher) {
+            async_publisher->throw_if_failed();
+        }
+
         catcheye::input::Frame frame;
         const auto read_status = bootstrap.camera_source->read(frame);
         if (read_status == catcheye::input::FrameReadStatus::Error) {
@@ -524,7 +537,7 @@ int run_pick_detection(AppBootstrap bootstrap)
         }
 
         PickDetectionFrame detection_frame = processor.process_detection_frame(frame, cubeeye_frames, ++frame_index);
-        if (websocket) {
+        if (async_publisher) {
             std::vector<catcheye::Detection> detections;
             detections.reserve(detection_frame.detections.size());
             for (const auto& detection : detection_frame.detections) {
@@ -542,11 +555,17 @@ int run_pick_detection(AppBootstrap bootstrap)
 
             PickViewerFrame viewer_frame = processor.process_viewer_frame(
                 std::optional<catcheye::input::Frame>{std::move(publish_frame)},
-                cubeeye_frames,
+                {},
                 detection_frame.frame_index);
             const std::string metadata = build_viewer_metadata(viewer_frame, false, &detection_frame);
-            const auto payloads = viewer_payload_spans(viewer_frame);
-            websocket->publish_payloads(metadata, payloads);
+            async_publisher->publish_with_metadata("camera", std::move(metadata), std::move(viewer_frame));
+
+            if (cubeeye_frames.sequence != 0 && cubeeye_frames.sequence != published_cubeeye_sequence) {
+                PickViewerFrame cubeeye_viewer_frame = processor.process_viewer_frame(std::nullopt, cubeeye_frames, detection_frame.frame_index);
+                const std::string cubeeye_metadata = build_viewer_metadata(cubeeye_viewer_frame, false, &detection_frame);
+                async_publisher->publish_with_metadata("cubeeye", std::move(cubeeye_metadata), std::move(cubeeye_viewer_frame));
+                published_cubeeye_sequence = cubeeye_frames.sequence;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
     }

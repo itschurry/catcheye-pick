@@ -26,7 +26,9 @@ namespace catcheye::pick {
 namespace {
 
 constexpr float RGB_TO_CUBEEYE_OFFSET_U = 0.00F;
-constexpr float RGB_TO_CUBEEYE_OFFSET_V = 0.30F;
+constexpr float RGB_TO_CUBEEYE_OFFSET_V = 0.40F;
+constexpr int WEBSOCKET_CAMERA_MAX_WIDTH = 1280;
+constexpr int WEBSOCKET_CAMERA_MAX_HEIGHT = 720;
 
 std::uint64_t wall_clock_millis() {
     return static_cast<std::uint64_t>(
@@ -136,6 +138,19 @@ std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr) {
     return jpeg;
 }
 
+cv::Mat limit_camera_payload_resolution(const cv::Mat& bgr) {
+    if (bgr.cols <= WEBSOCKET_CAMERA_MAX_WIDTH && bgr.rows <= WEBSOCKET_CAMERA_MAX_HEIGHT) {
+        return bgr;
+    }
+
+    const double scale = std::min(
+        static_cast<double>(WEBSOCKET_CAMERA_MAX_WIDTH) / static_cast<double>(bgr.cols),
+        static_cast<double>(WEBSOCKET_CAMERA_MAX_HEIGHT) / static_cast<double>(bgr.rows));
+    cv::Mat resized;
+    cv::resize(bgr, resized, cv::Size(), scale, scale, cv::INTER_AREA);
+    return resized;
+}
+
 std::string escape_json(std::string_view value) {
     std::ostringstream oss;
     for (const char ch : value) {
@@ -164,7 +179,7 @@ std::string escape_json(std::string_view value) {
 }
 
 ViewerPayload camera_payload(const catcheye::input::Frame& frame) {
-    const cv::Mat bgr = frame_to_bgr(frame);
+    const cv::Mat bgr = limit_camera_payload_resolution(frame_to_bgr(frame));
     if (bgr.empty()) {
         throw std::runtime_error("failed to convert Camera Module 3 frame");
     }
@@ -279,7 +294,8 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
     const float left_u = std::clamp((box.x / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
     const float top_v = std::clamp((box.y / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
     const float right_u = std::clamp(((box.x + box.width) / static_cast<float>(camera_frame.width)) + RGB_TO_CUBEEYE_OFFSET_U, 0.0F, 1.0F);
-    const float bottom_v = std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
+    const float bottom_v =
+        std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + RGB_TO_CUBEEYE_OFFSET_V, 0.0F, 1.0F);
     const int min_px = std::clamp(static_cast<int>(std::floor(std::min(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
     const int max_px = std::clamp(static_cast<int>(std::ceil(std::max(left_u, right_u) * static_cast<float>(width))), 0, width - 1);
     const int min_py = std::clamp(static_cast<int>(std::floor(std::min(top_v, bottom_v) * static_cast<float>(height))), 0, height - 1);
@@ -287,7 +303,8 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(cons
 
     std::vector<PointSample> samples;
     std::vector<float> sample_zs;
-    samples.reserve(static_cast<std::size_t>(std::max(0, max_px - min_px + 1)) * static_cast<std::size_t>(std::max(0, max_py - min_py + 1)));
+    samples.reserve(static_cast<std::size_t>(std::max(0, max_px - min_px + 1)) *
+                    static_cast<std::size_t>(std::max(0, max_py - min_py + 1)));
 
     const auto* x_data = xs->data();
     const auto* y_data = ys->data();
@@ -609,9 +626,9 @@ void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& 
             const auto& position = *detection.position;
             oss << "{\"x\":" << position.x << ",\"y\":" << position.y << ",\"z\":" << position.z
                 << ",\"sample_count\":" << position.sample_count << ",\"pointcloud_x\":" << position.pointcloud_x
-                << ",\"pointcloud_y\":" << position.pointcloud_y
-                << ",\"bbox3d\":{\"min_x\":" << position.min_x << ",\"min_y\":" << position.min_y << ",\"min_z\":" << position.min_z
-                << ",\"max_x\":" << position.max_x << ",\"max_y\":" << position.max_y << ",\"max_z\":" << position.max_z << "}}";
+                << ",\"pointcloud_y\":" << position.pointcloud_y << ",\"bbox3d\":{\"min_x\":" << position.min_x
+                << ",\"min_y\":" << position.min_y << ",\"min_z\":" << position.min_z << ",\"max_x\":" << position.max_x
+                << ",\"max_y\":" << position.max_y << ",\"max_z\":" << position.max_z << "}}";
         } else {
             oss << "null";
         }

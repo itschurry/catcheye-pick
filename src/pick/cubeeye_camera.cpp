@@ -95,8 +95,8 @@ void CubeEyeCameraSession::CaptureSink::onCubeEyeFrameList(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    frame_set.sequence = ++sequence_;
     latest_ = std::move(frame_set);
-    ++sequence_;
     cv_.notify_all();
 }
 
@@ -149,9 +149,6 @@ void CubeEyeCameraSession::open()
     if (camera_->prepare() != meere::sensor::result::success) {
         throw std::runtime_error("failed to prepare CubeEye camera");
     }
-    if (camera_->run(cubeeye_frame_mask(specs_)) != meere::sensor::result::success) {
-        throw std::runtime_error("failed to run CubeEye camera");
-    }
     if (camera_fps_ > 0) {
         const auto property = meere::sensor::make_property_8u(
             std::string(CUBEEYE_FRAMERATE_PROPERTY),
@@ -160,6 +157,9 @@ void CubeEyeCameraSession::open()
             throw std::runtime_error("failed to set CubeEye framerate");
         }
         std::cerr << "CubeEye framerate set to " << camera_fps_ << " fps\n";
+    }
+    if (camera_->run(cubeeye_frame_mask(specs_)) != meere::sensor::result::success) {
+        throw std::runtime_error("failed to run CubeEye camera");
     }
 }
 
