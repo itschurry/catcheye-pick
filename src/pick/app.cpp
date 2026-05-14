@@ -294,6 +294,21 @@ public:
         return *latest_;
     }
 
+    CubeEyeFrameSet latest_after(std::uint64_t last_sequence)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [&] {
+            return (latest_.has_value() && latest_->sequence != last_sequence) || error_ || stopping_;
+        });
+        if (error_) {
+            std::rethrow_exception(error_);
+        }
+        if (!latest_ || latest_->sequence == last_sequence) {
+            throw std::runtime_error("CubeEye frame reader stopped before receiving frames");
+        }
+        return *latest_;
+    }
+
 private:
     void run()
     {
@@ -331,6 +346,98 @@ private:
     std::mutex mutex_;
     std::condition_variable condition_;
     std::optional<CubeEyeFrameSet> latest_;
+    bool stopping_{false};
+    std::exception_ptr error_;
+};
+
+class LatestRgbFrameReader {
+public:
+    struct FrameSnapshot {
+        std::uint64_t sequence = 0;
+        catcheye::input::Frame frame;
+    };
+
+    explicit LatestRgbFrameReader(catcheye::input::FrameSource& camera_source)
+        : camera_source_(camera_source)
+        , thread_(&LatestRgbFrameReader::run, this)
+    {}
+
+    ~LatestRgbFrameReader()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        condition_.notify_all();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    FrameSnapshot latest_after(std::uint64_t last_sequence)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [&] {
+            return (latest_.has_value() && latest_->sequence != last_sequence) || error_ || stopping_;
+        });
+        if (error_) {
+            std::rethrow_exception(error_);
+        }
+        if (!latest_ || latest_->sequence == last_sequence) {
+            throw std::runtime_error("RGB frame reader stopped before receiving frames");
+        }
+        return *latest_;
+    }
+
+private:
+    void run()
+    {
+        try {
+            while (true) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
+                }
+
+                catcheye::input::Frame frame;
+                const auto read_status = camera_source_.read(frame);
+                if (read_status == catcheye::input::FrameReadStatus::Error) {
+                    throw std::runtime_error("Camera Module 3 frame read failed");
+                }
+                if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
+                    throw std::runtime_error("Camera Module 3 stream ended");
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
+                    latest_ = FrameSnapshot{
+                        .sequence = ++sequence_,
+                        .frame = std::move(frame),
+                    };
+                }
+                condition_.notify_all();
+                std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
+            }
+        } catch (...) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                error_ = std::current_exception();
+            }
+            condition_.notify_all();
+        }
+    }
+
+    catcheye::input::FrameSource& camera_source_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::optional<FrameSnapshot> latest_;
+    std::uint64_t sequence_ = 0;
     bool stopping_{false};
     std::exception_ptr error_;
 };
@@ -519,60 +626,99 @@ int run_pick_detection(AppBootstrap bootstrap)
         async_publisher.emplace(*websocket);
     }
 
-    std::uint64_t frame_index = 0;
-    std::uint64_t published_cubeeye_sequence = 0;
-    while (true) {
-        if (async_publisher) {
-            async_publisher->throw_if_failed();
-        }
-
-        catcheye::input::Frame frame;
-        const auto read_status = bootstrap.camera_source->read(frame);
-        if (read_status == catcheye::input::FrameReadStatus::Error) {
-            throw std::runtime_error("Camera Module 3 frame read failed");
-        }
-        if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
-            throw std::runtime_error("Camera Module 3 stream ended");
-        }
-
-        CubeEyeFrameSet cubeeye_frames;
-        if (cubeeye_reader) {
-            cubeeye_frames = cubeeye_reader->latest();
-        }
-
-        PickDetectionFrame detection_frame = processor.process_detection_frame(frame, cubeeye_frames, ++frame_index);
-        if (async_publisher) {
-            std::vector<catcheye::Detection> detections;
-            detections.reserve(detection_frame.detections.size());
-            for (const auto& detection : detection_frame.detections) {
-                detections.push_back(catcheye::Detection{
-                    .class_id = detection.class_id,
-                    .score = detection.score,
-                    .box = detection.box,
-                });
-            }
-
-            catcheye::input::Frame publish_frame;
-            if (!catcheye::visualization::build_annotated_detection_frame(frame, detections, publish_frame)) {
-                throw std::runtime_error("failed to build annotated detection frame");
-            }
-
-            PickViewerFrame viewer_frame = processor.process_viewer_frame(
-                std::optional<catcheye::input::Frame>{std::move(publish_frame)},
-                {},
-                detection_frame.frame_index);
-            const std::string metadata = build_viewer_metadata(viewer_frame, false, &detection_frame);
-            async_publisher->publish_with_metadata("camera", std::move(metadata), std::move(viewer_frame));
-
-            if (cubeeye_frames.sequence != 0 && cubeeye_frames.sequence != published_cubeeye_sequence) {
-                PickViewerFrame cubeeye_viewer_frame = processor.process_viewer_frame(std::nullopt, cubeeye_frames, detection_frame.frame_index);
-                const std::string cubeeye_metadata = build_viewer_metadata(cubeeye_viewer_frame, false, &detection_frame);
-                async_publisher->publish_with_metadata("cubeeye", std::move(cubeeye_metadata), std::move(cubeeye_viewer_frame));
-                published_cubeeye_sequence = cubeeye_frames.sequence;
+    LatestRgbFrameReader rgb_reader(*bootstrap.camera_source);
+    std::atomic_bool running{true};
+    std::mutex worker_error_mutex;
+    std::exception_ptr worker_error;
+    auto capture_worker_error = [&] {
+        {
+            std::lock_guard<std::mutex> lock(worker_error_mutex);
+            if (!worker_error) {
+                worker_error = std::current_exception();
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(CAMERA_READ_SLEEP_MS));
+        running = false;
+    };
+
+    std::optional<std::thread> cubeeye_publish_worker;
+    if (async_publisher && cubeeye_reader) {
+        cubeeye_publish_worker.emplace([&] {
+            try {
+                std::uint64_t published_cubeeye_sequence = 0;
+                while (running) {
+                    CubeEyeFrameSet cubeeye_frames = cubeeye_reader->latest_after(published_cubeeye_sequence);
+                    PickViewerFrame cubeeye_viewer_frame = processor.process_viewer_frame(std::nullopt, cubeeye_frames, cubeeye_frames.sequence);
+                    const std::string cubeeye_metadata = build_viewer_metadata(cubeeye_viewer_frame, false, nullptr);
+                    async_publisher->publish_with_metadata("cubeeye", std::move(cubeeye_metadata), std::move(cubeeye_viewer_frame));
+                    published_cubeeye_sequence = cubeeye_frames.sequence;
+                }
+            } catch (...) {
+                capture_worker_error();
+            }
+        });
     }
+
+    try {
+        std::uint64_t frame_index = 0;
+        std::uint64_t last_rgb_sequence = 0;
+        while (running) {
+            if (async_publisher) {
+                async_publisher->throw_if_failed();
+            }
+            if (worker_error_snapshot(worker_error_mutex, worker_error)) {
+                break;
+            }
+
+            LatestRgbFrameReader::FrameSnapshot rgb_snapshot = rgb_reader.latest_after(last_rgb_sequence);
+            last_rgb_sequence = rgb_snapshot.sequence;
+
+            CubeEyeFrameSet cubeeye_frames;
+            if (cubeeye_reader) {
+                cubeeye_frames = cubeeye_reader->latest();
+            }
+
+            PickDetectionFrame detection_frame = processor.process_detection_frame(rgb_snapshot.frame, cubeeye_frames, ++frame_index);
+            if (async_publisher) {
+                std::vector<catcheye::Detection> detections;
+                detections.reserve(detection_frame.detections.size());
+                for (const auto& detection : detection_frame.detections) {
+                    detections.push_back(catcheye::Detection{
+                        .class_id = detection.class_id,
+                        .score = detection.score,
+                        .box = detection.box,
+                    });
+                }
+
+                catcheye::input::Frame publish_frame;
+                if (!catcheye::visualization::build_annotated_detection_frame(rgb_snapshot.frame, detections, publish_frame)) {
+                    throw std::runtime_error("failed to build annotated detection frame");
+                }
+
+                PickViewerFrame viewer_frame = processor.process_viewer_frame(
+                    std::optional<catcheye::input::Frame>{std::move(publish_frame)},
+                    {},
+                    detection_frame.frame_index);
+                const std::string metadata = build_viewer_metadata(viewer_frame, false, &detection_frame);
+                async_publisher->publish_with_metadata("camera", std::move(metadata), std::move(viewer_frame));
+            }
+        }
+    } catch (...) {
+        running = false;
+        if (cubeeye_publish_worker && cubeeye_publish_worker->joinable()) {
+            cubeeye_publish_worker->join();
+        }
+        throw;
+    }
+
+    running = false;
+    if (cubeeye_publish_worker && cubeeye_publish_worker->joinable()) {
+        cubeeye_publish_worker->join();
+    }
+    if (const auto error = worker_error_snapshot(worker_error_mutex, worker_error)) {
+        std::rethrow_exception(error);
+    }
+
+    return 0;
 }
 
 } // namespace

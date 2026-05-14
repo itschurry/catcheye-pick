@@ -9,4 +9,4 @@ exec "$CATCHEYE_PICK_PATH/bin/catcheye-pick" \
   --ws \
   --viewer-only \
   --camera-input rgb \
-  --camera-pipeline "libcamerasrc ! video/x-raw,width=1280,height=720,framerate=15/1,format=NV12 ! videoflip method=rotate-180"
+  --camera-pipeline "libcamerasrc ! video/x-raw,width=2304,height=1296,framerate=7/1,format=NV12 ! queue leaky=downstream max-size-buffers=1 ! videoflip method=rotate-180" \
