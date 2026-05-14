@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -15,26 +16,90 @@ namespace {
 constexpr int CUBEEYE_FRAME_WAIT_MS = 5000;
 constexpr std::string_view CUBEEYE_FRAMERATE_PROPERTY = "framerate";
 
+enum class CubeEyePropertyType {
+    Bool,
+    Int,
+    Float,
+};
+
+struct CubeEyePropertySpec {
+    std::string_view key;
+    CubeEyePropertyType type;
+    bool required = false;
+};
+
+constexpr std::array<CubeEyePropertySpec, 26> CUBEEYE_PROPERTIES{{
+    {"framerate", CubeEyePropertyType::Int, true},
+    {"auto_exposure", CubeEyePropertyType::Bool, true},
+    {"illumination", CubeEyePropertyType::Bool, true},
+    {"depth_range_min", CubeEyePropertyType::Int, true},
+    {"depth_range_max", CubeEyePropertyType::Int, true},
+    {"amplitude_time_filter", CubeEyePropertyType::Bool},
+    {"depth_average_median_filter", CubeEyePropertyType::Bool},
+    {"depth_time_filter", CubeEyePropertyType::Bool},
+    {"flying_pixel_remove_filter", CubeEyePropertyType::Bool},
+    {"noise_filter1", CubeEyePropertyType::Bool},
+    {"noise_filter2", CubeEyePropertyType::Bool},
+    {"noise_filter3", CubeEyePropertyType::Bool},
+    {"amplitude_threshold_min", CubeEyePropertyType::Int},
+    {"amplitude_threshold_max", CubeEyePropertyType::Int},
+    {"amplitude_time_spatial_threshold", CubeEyePropertyType::Float},
+    {"amplitude_time_temporal_threshold", CubeEyePropertyType::Float},
+    {"depth_average_median_max_n", CubeEyePropertyType::Int},
+    {"depth_offset", CubeEyePropertyType::Int},
+    {"depth_time_spatial_threshold", CubeEyePropertyType::Float},
+    {"depth_time_temporal_threshold", CubeEyePropertyType::Float},
+    {"flying_pixel_remove_threshold", CubeEyePropertyType::Int},
+    {"integration_time", CubeEyePropertyType::Int},
+    {"motion_blur_frequency", CubeEyePropertyType::Int},
+    {"motion_blur_threshold", CubeEyePropertyType::Int},
+    {"motion_blur_threshold2", CubeEyePropertyType::Int},
+    {"scattering_threshold", CubeEyePropertyType::Int},
+}};
+
+std::optional<CubeEyePropertySpec> find_property_spec(std::string_view key)
+{
+    for (const auto& spec : CUBEEYE_PROPERTIES) {
+        if (spec.key == key) {
+            return spec;
+        }
+    }
+    return std::nullopt;
+}
+
 bool is_bool_property(std::string_view key)
 {
-    return key == "auto_exposure" || key == "illumination";
+    const auto spec = find_property_spec(key);
+    return spec.has_value() && spec->type == CubeEyePropertyType::Bool;
 }
 
 bool is_int_property(std::string_view key)
 {
-    return key == "framerate" || key == "depth_range_min" || key == "depth_range_max";
+    const auto spec = find_property_spec(key);
+    return spec.has_value() && spec->type == CubeEyePropertyType::Int;
 }
 
-std::string property_json_pair(const meere::sensor::sptr_camera& camera, std::string_view key)
+bool is_float_property(std::string_view key)
 {
-    const auto [result, property] = camera->getProperty(std::string(key));
+    const auto spec = find_property_spec(key);
+    return spec.has_value() && spec->type == CubeEyePropertyType::Float;
+}
+
+std::optional<std::string> property_json_pair(const meere::sensor::sptr_camera& camera, CubeEyePropertySpec spec)
+{
+    const auto [result, property] = camera->getProperty(std::string(spec.key));
     if (result != meere::sensor::result::success || !property) {
-        throw std::runtime_error("failed to get CubeEye property: " + std::string(key));
+        if (spec.required) {
+            throw std::runtime_error("failed to get CubeEye property: " + std::string(spec.key));
+        }
+        return std::nullopt;
     }
     std::ostringstream oss;
-    oss << "\"" << key << "\":";
-    if (is_bool_property(key)) {
+    oss << "\"" << spec.key << "\":";
+    if (spec.type == CubeEyePropertyType::Bool) {
         oss << (property->asBoolean(false) ? "true" : "false");
+    } else if (spec.type == CubeEyePropertyType::Float) {
+        oss << property->asFlt32(0.0F);
     } else {
         oss << property->asInt32u(0);
     }
@@ -192,18 +257,17 @@ std::optional<std::string> CubeEyeCameraSession::properties_json() const
 
     std::ostringstream oss;
     oss << "{";
-    const std::array<std::string_view, 5> keys{
-        "framerate",
-        "auto_exposure",
-        "illumination",
-        "depth_range_min",
-        "depth_range_max",
-    };
-    for (std::size_t i = 0; i < keys.size(); ++i) {
-        if (i > 0) {
+    bool first = true;
+    for (const auto& spec : CUBEEYE_PROPERTIES) {
+        const auto pair = property_json_pair(camera_, spec);
+        if (!pair.has_value()) {
+            continue;
+        }
+        if (!first) {
             oss << ',';
         }
-        oss << property_json_pair(camera_, keys[i]);
+        first = false;
+        oss << *pair;
     }
     oss << "}";
     return oss.str();
@@ -237,6 +301,19 @@ bool CubeEyeCameraSession::set_int_property(std::string_view key, int value)
     } else {
         property = meere::sensor::make_property_16u(std::string(key), static_cast<meere::sensor::int16u>(value));
     }
+    return property && camera_->setProperty(property) == meere::sensor::result::success;
+}
+
+bool CubeEyeCameraSession::set_float_property(std::string_view key, float value)
+{
+    if (!is_float_property(key)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_) {
+        return false;
+    }
+    const auto property = meere::sensor::make_property_32f(std::string(key), value);
     return property && camera_->setProperty(property) == meere::sensor::result::success;
 }
 

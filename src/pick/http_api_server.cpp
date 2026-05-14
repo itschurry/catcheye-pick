@@ -1,6 +1,7 @@
 #include "pick/http_api_server.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <exception>
 #include <iostream>
 #include <sstream>
@@ -19,11 +20,13 @@ struct JsonValue {
     enum class Type {
         Boolean,
         Integer,
+        Float,
     };
 
     Type type = Type::Integer;
     bool bool_value = false;
     int int_value = 0;
+    float float_value = 0.0F;
 };
 
 std::string trim(std::string value)
@@ -39,12 +42,27 @@ std::string trim(std::string value)
 
 bool is_supported_cubeeye_property(std::string_view key)
 {
-    return key == "framerate" || key == "auto_exposure" || key == "illumination" || key == "depth_range_min" || key == "depth_range_max";
+    return key == "framerate" || key == "auto_exposure" || key == "illumination" || key == "depth_range_min" || key == "depth_range_max" ||
+           key == "amplitude_time_filter" || key == "depth_average_median_filter" || key == "depth_time_filter" ||
+           key == "flying_pixel_remove_filter" || key == "noise_filter1" || key == "noise_filter2" || key == "noise_filter3" ||
+           key == "amplitude_threshold_min" || key == "amplitude_threshold_max" || key == "amplitude_time_spatial_threshold" ||
+           key == "amplitude_time_temporal_threshold" || key == "depth_average_median_max_n" || key == "depth_offset" ||
+           key == "depth_time_spatial_threshold" || key == "depth_time_temporal_threshold" || key == "flying_pixel_remove_threshold" ||
+           key == "integration_time" || key == "motion_blur_frequency" || key == "motion_blur_threshold" ||
+           key == "motion_blur_threshold2" || key == "scattering_threshold";
 }
 
 bool is_bool_cubeeye_property(std::string_view key)
 {
-    return key == "auto_exposure" || key == "illumination";
+    return key == "auto_exposure" || key == "illumination" || key == "amplitude_time_filter" || key == "depth_average_median_filter" ||
+           key == "depth_time_filter" || key == "flying_pixel_remove_filter" || key == "noise_filter1" || key == "noise_filter2" ||
+           key == "noise_filter3";
+}
+
+bool is_float_cubeeye_property(std::string_view key)
+{
+    return key == "amplitude_time_spatial_threshold" || key == "amplitude_time_temporal_threshold" ||
+           key == "depth_time_spatial_threshold" || key == "depth_time_temporal_threshold";
 }
 
 bool valid_int_value(std::string_view key, int value)
@@ -55,7 +73,7 @@ bool valid_int_value(std::string_view key, int value)
     if (key == "depth_range_min" || key == "depth_range_max") {
         return value >= 0 && value <= 8192;
     }
-    return false;
+    return value >= 0;
 }
 
 bool parse_value_body(std::string_view body, JsonValue& output)
@@ -83,11 +101,22 @@ bool parse_value_body(std::string_view body, JsonValue& output)
     try {
         std::size_t consumed = 0;
         const int value = std::stoi(value_text, &consumed);
-        if (consumed != value_text.size()) {
+        if (consumed == value_text.size()) {
+            output.type = JsonValue::Type::Integer;
+            output.int_value = value;
+            return true;
+        }
+    } catch (...) {
+    }
+
+    try {
+        std::size_t consumed = 0;
+        const float value = std::stof(value_text, &consumed);
+        if (consumed != value_text.size() || !std::isfinite(value)) {
             return false;
         }
-        output.type = JsonValue::Type::Integer;
-        output.int_value = value;
+        output.type = JsonValue::Type::Float;
+        output.float_value = value;
         return true;
     } catch (...) {
         return false;
@@ -249,6 +278,11 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const st
             return {400, "Bad Request", catcheye::http::json_error_body("property value must be boolean")};
         }
         updated = cubeeye_->set_bool_property(key, value.bool_value);
+    } else if (is_float_cubeeye_property(key)) {
+        if (value.type != JsonValue::Type::Float && value.type != JsonValue::Type::Integer) {
+            return {400, "Bad Request", catcheye::http::json_error_body("property value must be number")};
+        }
+        updated = cubeeye_->set_float_property(key, value.type == JsonValue::Type::Float ? value.float_value : static_cast<float>(value.int_value));
     } else {
         if (value.type != JsonValue::Type::Integer) {
             return {400, "Bad Request", catcheye::http::json_error_body("property value must be integer")};

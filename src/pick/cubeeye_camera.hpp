@@ -48,6 +48,7 @@ class CubeEyeCameraSession final {
     std::optional<std::string> properties_json() const;
     bool set_bool_property(std::string_view key, bool value);
     bool set_int_property(std::string_view key, int value);
+    bool set_float_property(std::string_view key, float value);
 
   private:
     class CaptureSink final : public meere::sensor::sink {
