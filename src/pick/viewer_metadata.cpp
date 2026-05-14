@@ -69,6 +69,47 @@ void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& 
     oss << "]";
 }
 
+void append_robot_point(std::ostringstream& oss, const PickViewerFrame::RobotPoint& point)
+{
+    oss << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"z\":" << point.z << "}";
+}
+
+void append_pallet_candidate_fields(std::ostringstream& oss, const PickViewerFrame& frame)
+{
+    oss << "\"robot_calibration_enabled\":" << (frame.robot_calibration_enabled ? "true" : "false") << ',';
+    oss << "\"pallet_plane\":";
+    if (frame.pallet_plane.has_value()) {
+        const auto& plane = *frame.pallet_plane;
+        oss << "{\"normal\":[" << plane.normal_x << ',' << plane.normal_y << ',' << plane.normal_z << "],\"d\":" << plane.d
+            << ",\"sample_count\":" << plane.sample_count << "}";
+    } else {
+        oss << "null";
+    }
+    oss << ",\"pallet_candidate_count\":" << frame.pallet_candidates.size() << ",\"pallet_candidates\":[";
+    for (std::size_t i = 0; i < frame.pallet_candidates.size(); ++i) {
+        const auto& candidate = frame.pallet_candidates[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"id\":" << candidate.id << ",\"center_camera_m\":[" << candidate.center_x << ',' << candidate.center_y << ','
+            << candidate.center_z << "],\"bbox_camera_m\":[" << candidate.min_x << ',' << candidate.min_y << ',' << candidate.min_z << ','
+            << candidate.max_x << ',' << candidate.max_y << ',' << candidate.max_z << "],\"height_m\":" << candidate.height_m
+            << ",\"area_m2\":" << candidate.area_m2 << ",\"sample_count\":" << candidate.sample_count
+            << ",\"confidence\":" << candidate.confidence << ",\"robot\":";
+        if (candidate.r1.has_value() && candidate.r2.has_value()) {
+            oss << "{\"r1\":";
+            append_robot_point(oss, *candidate.r1);
+            oss << ",\"r2\":";
+            append_robot_point(oss, *candidate.r2);
+            oss << "}";
+        } else {
+            oss << "null";
+        }
+        oss << "}";
+    }
+    oss << "]";
+}
+
 } // namespace
 
 std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only, const PickDetectionFrame* detection_frame)
@@ -80,6 +121,8 @@ std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only
         << "\"roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.roi_config, 0) << ','
         << "\"pallet_roi_enabled\":" << (frame.pallet_roi_enabled ? "true" : "false") << ','
         << "\"pallet_roi\":" << catcheye::roi::RoiRepository::to_json_string(frame.pallet_roi_config, 0) << ',';
+    append_pallet_candidate_fields(oss, frame);
+    oss << ',';
     if (detection_frame != nullptr) {
         append_detection_fields(oss, *detection_frame);
         oss << ',';

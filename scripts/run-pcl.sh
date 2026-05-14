@@ -9,5 +9,6 @@ exec "$CATCHEYE_PICK_PATH/bin/catcheye-pick" \
   --ws \
   --viewer-only \
   --camera-input cubeeye \
-  --cubeeye-frames depth \
-  --cubeeye-camera-fps 15
+  --cubeeye-frames pointcloud \
+  --cubeeye-camera-fps 30 \
+  --pointcloud-downsample 1

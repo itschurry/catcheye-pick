@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "r1_tx_m": 0.0,
+  "r1_ty_m": 0.0,
+  "r1_tz_m": 0.0,
+  "r1_roll_deg": 0.0,
+  "r1_pitch_deg": 0.0,
+  "r1_yaw_deg": 0.0,
+  "r2_tx_m": 0.0,
+  "r2_ty_m": 0.0,
+  "r2_tz_m": 0.0,
+  "r2_roll_deg": 0.0,
+  "r2_pitch_deg": 0.0,
+  "r2_yaw_deg": 0.0
+}

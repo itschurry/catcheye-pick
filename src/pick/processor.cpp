@@ -8,6 +8,7 @@
 #include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/roi/roi_validation.hpp"
 #include "pick/object_position_estimator.hpp"
+#include "pick/pallet_candidate_detector.hpp"
 #include "pick/viewer_payload_builder.hpp"
 
 namespace catcheye::pick {
@@ -91,6 +92,24 @@ RgbCubeEyeOffset PickProcessor::rgb_cubeeye_offset() const
     return config_.rgb_cubeeye_offset;
 }
 
+PalletCandidateConfig PickProcessor::pallet_candidate_config() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return config_.pallet_candidate_config;
+}
+
+RobotCalibrationConfig PickProcessor::robot_calibration() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return config_.robot_calibration;
+}
+
+PointCloudRoiConfig PickProcessor::pointcloud_roi_config() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return config_.pointcloud_roi_config;
+}
+
 bool PickProcessor::update_rgb_cubeeye_offset(RgbCubeEyeOffset offset)
 {
     if (!std::isfinite(offset.u) || !std::isfinite(offset.v) || offset.u < -1.0F || offset.u > 1.0F || offset.v < -1.0F ||
@@ -100,6 +119,51 @@ bool PickProcessor::update_rgb_cubeeye_offset(RgbCubeEyeOffset offset)
 
     std::lock_guard<std::mutex> lock(roi_mutex_);
     config_.rgb_cubeeye_offset = offset;
+    return true;
+}
+
+bool PickProcessor::update_pallet_candidate_config(PalletCandidateConfig config)
+{
+    if (!std::isfinite(config.min_height_m) || !std::isfinite(config.max_height_m) || config.min_height_m <= 0.0F ||
+        config.max_height_m <= config.min_height_m || config.min_points <= 0 || config.max_image_gap_px < 1) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.pallet_candidate_config = config;
+    return true;
+}
+
+bool PickProcessor::update_pointcloud_roi_config(PointCloudRoiConfig config)
+{
+    if (!std::isfinite(config.min_x_m) || !std::isfinite(config.max_x_m) || !std::isfinite(config.min_y_m) ||
+        !std::isfinite(config.max_y_m) || !std::isfinite(config.min_z_m) || !std::isfinite(config.max_z_m) ||
+        config.max_x_m <= config.min_x_m || config.max_y_m <= config.min_y_m || config.max_z_m <= config.min_z_m) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.pointcloud_roi_config = config;
+    return true;
+}
+
+bool PickProcessor::update_robot_calibration(RobotCalibrationConfig config)
+{
+    for (const auto* transform : {&config.r1, &config.r2}) {
+        for (float value : transform->translation_m) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+        for (float value : transform->rotation_rpy_deg) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.robot_calibration = config;
     return true;
 }
 
@@ -147,12 +211,25 @@ PickViewerFrame PickProcessor::process_viewer_frame(const std::optional<catcheye
     output.roi_config = roi.config;
     output.pallet_roi_enabled = pallet_roi.enabled;
     output.pallet_roi_config = pallet_roi.config;
+    output.robot_calibration_enabled = robot_calibration().enabled;
     output.payloads.reserve(1U + cubeeye_frames.frames.size());
     if (camera_frame.has_value()) {
         output.payloads.push_back(camera_payload(*camera_frame));
     }
+    const PointCloudRoiConfig pointcloud_roi = pointcloud_roi_config();
     for (const auto& frame : cubeeye_frames.frames) {
-        output.payloads.push_back(cubeeye_payload(frame, config_.pointcloud_downsample));
+        output.payloads.push_back(cubeeye_payload(frame, config_.pointcloud_downsample, pointcloud_roi));
+    }
+    const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(cubeeye_frames);
+    if (pointcloud_frame != nullptr && pallet_roi.enabled) {
+        const auto candidates = detect_pallet_candidates(
+            *pointcloud_frame,
+            pallet_roi.config,
+            pointcloud_roi,
+            pallet_candidate_config(),
+            robot_calibration());
+        output.pallet_plane = candidates.plane;
+        output.pallet_candidates = candidates.candidates;
     }
     return output;
 }

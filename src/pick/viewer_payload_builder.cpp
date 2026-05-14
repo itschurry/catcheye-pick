@@ -135,7 +135,15 @@ void write_float32_le(std::uint8_t*& output, float value)
     output += sizeof(value);
 }
 
-ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample)
+bool point_in_viewer_roi(float x, float y, float z, const PointCloudRoiConfig& roi)
+{
+    if (!roi.enabled || !roi.apply_to_viewer) {
+        return true;
+    }
+    return x >= roi.min_x_m && x <= roi.max_x_m && y >= roi.min_y_m && y <= roi.max_y_m && z >= roi.min_z_m && z <= roi.max_z_m;
+}
+
+ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int downsample, const PointCloudRoiConfig& pointcloud_roi)
 {
     if (downsample <= 0) {
         throw std::runtime_error("pointcloud downsample must be positive");
@@ -160,22 +168,26 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
         throw std::runtime_error("CubeEye PointCloud XYZ arrays are smaller than frame dimensions");
     }
 
-    const auto sampled_width = (width + downsample - 1) / downsample;
-    const auto sampled_height = (height + downsample - 1) / downsample;
-    const auto point_count = static_cast<std::uint64_t>(sampled_width) * static_cast<std::uint64_t>(sampled_height);
     std::vector<std::uint8_t> bytes;
-    bytes.resize(static_cast<std::size_t>(point_count) * 3U * sizeof(float));
-    std::uint8_t* output = bytes.data();
+    bytes.reserve(((expected_count + static_cast<std::size_t>(downsample) - 1U) / static_cast<std::size_t>(downsample)) * 3U * sizeof(float));
     const auto* x_data = xs->data();
     const auto* y_data = ys->data();
     const auto* z_data = zs->data();
+    std::uint64_t point_count = 0;
 
     for (int y = 0; y < height; y += downsample) {
         for (int x = 0; x < width; x += downsample) {
             const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
+            if (!point_in_viewer_roi(x_data[index], y_data[index], z_data[index], pointcloud_roi)) {
+                continue;
+            }
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + (3U * sizeof(float)));
+            std::uint8_t* output = bytes.data() + offset;
             write_float32_le(output, x_data[index]);
             write_float32_le(output, y_data[index]);
             write_float32_le(output, z_data[index]);
+            ++point_count;
         }
     }
 
@@ -213,10 +225,10 @@ ViewerPayload camera_payload(const catcheye::input::Frame& frame)
     };
 }
 
-ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample)
+ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample, const PointCloudRoiConfig& pointcloud_roi)
 {
     if (entry.spec.type == meere::sensor::FrameType::PointCloud) {
-        return cubeeye_pointcloud_payload(entry, pointcloud_downsample);
+        return cubeeye_pointcloud_payload(entry, pointcloud_downsample, pointcloud_roi);
     }
 
     cv::Mat bgr;

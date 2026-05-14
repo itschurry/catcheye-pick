@@ -7,6 +7,6 @@
 namespace catcheye::pick {
 
 ViewerPayload camera_payload(const catcheye::input::Frame& frame);
-ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample);
+ViewerPayload cubeeye_payload(const CubeEyeFrameEntry& entry, int pointcloud_downsample, const PointCloudRoiConfig& pointcloud_roi);
 
 } // namespace catcheye::pick

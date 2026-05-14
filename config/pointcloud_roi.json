@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "apply_to_viewer": true,
+  "min_x_m": -1.0,
+  "max_x_m": 1.0,
+  "min_y_m": -1.0,
+  "max_y_m": 1.0,
+  "min_z_m": 0.0,
+  "max_z_m": 2.0
+}

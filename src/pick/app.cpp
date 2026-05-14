@@ -26,8 +26,11 @@
 #include "catcheye/visualization/annotation_renderer.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/http_api_server.hpp"
+#include "pick/pallet_candidate_repository.hpp"
+#include "pick/pointcloud_roi_repository.hpp"
 #include "pick/processor.hpp"
 #include "pick/rgb_cubeeye_offset_repository.hpp"
+#include "pick/robot_calibration_repository.hpp"
 #include "pick/viewer_metadata.hpp"
 
 namespace catcheye::pick {
@@ -56,6 +59,9 @@ void print_usage() {
               << "  --roi <path>              Person ROI config path\n"
               << "  --pallet-roi <path>       Pallet ROI config path\n"
               << "  --rgb-cubeeye-offset <path>  RGB to CubeEye offset config path\n"
+              << "  --pallet-candidates <path>  Pallet candidate config path\n"
+              << "  --pointcloud-roi <path>  PointCloud X/Y ROI config path\n"
+              << "  --robot-calibration <path>  Robot calibration config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
               << "  --cubeeye-camera-fps <fps>  CubeEye S111D camera framerate: 7 | 15 | 30\n"
               << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
@@ -471,6 +477,9 @@ int run_viewer_only(AppBootstrap bootstrap) {
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
     const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
+    const std::string http_pallet_candidate_config_path = bootstrap.pallet_candidate_config_path;
+    const std::string http_pointcloud_roi_config_path = bootstrap.pointcloud_roi_config_path;
+    const std::string http_robot_calibration_config_path = bootstrap.robot_calibration_config_path;
     PickProcessor processor(std::move(bootstrap.processor_config));
     if (!processor.initialize()) {
         throw std::runtime_error("failed to initialize pick processor");
@@ -480,6 +489,9 @@ int run_viewer_only(AppBootstrap bootstrap) {
         http_roi_config_path,
         http_pallet_roi_config_path,
         http_rgb_cubeeye_offset_config_path,
+        http_pallet_candidate_config_path,
+        http_pointcloud_roi_config_path,
+        http_robot_calibration_config_path,
         &processor,
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
@@ -587,6 +599,9 @@ int run_pick_detection(AppBootstrap bootstrap)
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
     const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
+    const std::string http_pallet_candidate_config_path = bootstrap.pallet_candidate_config_path;
+    const std::string http_pointcloud_roi_config_path = bootstrap.pointcloud_roi_config_path;
+    const std::string http_robot_calibration_config_path = bootstrap.robot_calibration_config_path;
     std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
     const int cubeeye_camera_fps = bootstrap.cubeeye_camera_fps;
     PickProcessor processor(std::move(bootstrap.processor_config));
@@ -614,6 +629,9 @@ int run_pick_detection(AppBootstrap bootstrap)
         http_roi_config_path,
         http_pallet_roi_config_path,
         http_rgb_cubeeye_offset_config_path,
+        http_pallet_candidate_config_path,
+        http_pointcloud_roi_config_path,
+        http_robot_calibration_config_path,
         &processor,
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
@@ -794,6 +812,21 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--rgb-cubeeye-offset requires a value");
             }
             options.rgb_cubeeye_offset_config_path = argv[++i];
+        } else if (arg == "--pallet-candidates") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--pallet-candidates requires a value");
+            }
+            options.pallet_candidate_config_path = argv[++i];
+        } else if (arg == "--pointcloud-roi") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--pointcloud-roi requires a value");
+            }
+            options.pointcloud_roi_config_path = argv[++i];
+        } else if (arg == "--robot-calibration") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--robot-calibration requires a value");
+            }
+            options.robot_calibration_config_path = argv[++i];
         } else if (arg == "--cubeeye-frames") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--cubeeye-frames requires a value");
@@ -917,6 +950,21 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
         : options.rgb_cubeeye_offset_config_path;
     bootstrap.processor_config.rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
     bootstrap.processor_config.rgb_cubeeye_offset = load_rgb_cubeeye_offset_config(bootstrap.rgb_cubeeye_offset_config_path);
+    bootstrap.pallet_candidate_config_path = options.pallet_candidate_config_path.empty()
+        ? resolve_default_config_path(executable_path, "pallet_candidates.json")
+        : options.pallet_candidate_config_path;
+    bootstrap.processor_config.pallet_candidate_config_path = bootstrap.pallet_candidate_config_path;
+    bootstrap.processor_config.pallet_candidate_config = load_pallet_candidate_config(bootstrap.pallet_candidate_config_path);
+    bootstrap.pointcloud_roi_config_path = options.pointcloud_roi_config_path.empty()
+        ? resolve_default_config_path(executable_path, "pointcloud_roi.json")
+        : options.pointcloud_roi_config_path;
+    bootstrap.processor_config.pointcloud_roi_config_path = bootstrap.pointcloud_roi_config_path;
+    bootstrap.processor_config.pointcloud_roi_config = load_pointcloud_roi_config(bootstrap.pointcloud_roi_config_path);
+    bootstrap.robot_calibration_config_path = options.robot_calibration_config_path.empty()
+        ? resolve_default_config_path(executable_path, "robot_calibration.json")
+        : options.robot_calibration_config_path;
+    bootstrap.processor_config.robot_calibration_config_path = bootstrap.robot_calibration_config_path;
+    bootstrap.processor_config.robot_calibration = load_robot_calibration_config(bootstrap.robot_calibration_config_path);
     bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
     bootstrap.processor_config.roi_config_path = options.roi_config_path.empty()
         ? resolve_default_config_path(executable_path, "roi_cam_default.json")

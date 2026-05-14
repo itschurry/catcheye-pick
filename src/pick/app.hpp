@@ -37,6 +37,9 @@ struct AppOptions {
     std::string roi_config_path;
     std::string pallet_roi_config_path;
     std::string rgb_cubeeye_offset_config_path;
+    std::string pallet_candidate_config_path;
+    std::string pointcloud_roi_config_path;
+    std::string robot_calibration_config_path;
     int cubeeye_camera_fps = 0;
     int pointcloud_downsample = 4;
     int num_threads = 2;
@@ -57,6 +60,9 @@ struct AppBootstrap {
     std::unique_ptr<catcheye::input::FrameSource> camera_source;
     int cubeeye_camera_fps = 0;
     std::string rgb_cubeeye_offset_config_path;
+    std::string pallet_candidate_config_path;
+    std::string pointcloud_roi_config_path;
+    std::string robot_calibration_config_path;
 };
 
 AppOptions parse_app_options(int argc, char** argv);
