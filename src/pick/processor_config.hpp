@@ -26,6 +26,7 @@ struct PickProcessorConfig {
     catcheye::DetectorFactoryConfig detector;
     std::vector<CubeEyeFrameSpec> cubeeye_frames;
     int pointcloud_downsample = 4;
+    std::string rgb_cubeeye_offset_config_path;
     RgbCubeEyeOffset rgb_cubeeye_offset;
     bool roi_enabled = false;
     std::string roi_config_path;

@@ -12,6 +12,7 @@
 #include "catcheye/http/roi_api.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/processor.hpp"
+#include "pick/rgb_cubeeye_offset_repository.hpp"
 
 namespace catcheye::pick {
 namespace {
@@ -147,24 +148,19 @@ bool parse_float_field(std::string_view body, std::string_view key, float& outpu
     }
 }
 
-std::string rgb_cubeeye_offset_json(RgbCubeEyeOffset offset)
-{
-    std::ostringstream oss;
-    oss << "{\"u\":" << offset.u << ",\"v\":" << offset.v << '}';
-    return oss.str();
-}
-
 } // namespace
 
 HttpApiServer::HttpApiServer(
     HttpApiServerConfig config,
     std::string roi_config_path,
     std::string pallet_roi_config_path,
+    std::string rgb_cubeeye_offset_config_path,
     PickProcessor* processor,
     CubeEyeCameraSession* cubeeye)
     : config_(std::move(config)),
       roi_config_path_(std::move(roi_config_path)),
       pallet_roi_config_path_(std::move(pallet_roi_config_path)),
+      rgb_cubeeye_offset_config_path_(std::move(rgb_cubeeye_offset_config_path)),
       processor_(processor),
       cubeeye_(cubeeye)
 {}
@@ -301,7 +297,11 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const st
 
 catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_cubeeye_offset() const
 {
-    return {200, "OK", rgb_cubeeye_offset_json(processor_->rgb_cubeeye_offset())};
+    try {
+        return {200, "OK", rgb_cubeeye_offset_to_json(load_rgb_cubeeye_offset_config(rgb_cubeeye_offset_config_path_))};
+    } catch (const std::exception& e) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
+    }
 }
 
 catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_offset(const std::string& body) const
@@ -310,9 +310,13 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_offset(const 
     if (!parse_float_field(body, "u", offset.u) || !parse_float_field(body, "v", offset.v)) {
         return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye offset JSON body")};
     }
-    if (!processor_->update_rgb_cubeeye_offset(offset)) {
+    if (!is_valid_rgb_cubeeye_offset(offset)) {
         return {400, "Bad Request", catcheye::http::json_error_body("RGB CubeEye offset out of range")};
     }
+    if (!save_rgb_cubeeye_offset_config(offset, rgb_cubeeye_offset_config_path_)) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body("failed to save RGB CubeEye offset config file")};
+    }
+    processor_->update_rgb_cubeeye_offset(offset);
     return handle_get_rgb_cubeeye_offset();
 }
 

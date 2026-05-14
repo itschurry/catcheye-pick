@@ -81,11 +81,10 @@ cd /opt/catcheye-pick
 - `--camera-pipeline <pipeline>`: Camera Module 3 GStreamer pipeline을 덮어쓴다.
 - `--roi <path>`: Person ROI config 경로를 지정한다.
 - `--pallet-roi <path>`: Pallet ROI config 경로를 지정한다.
+- `--rgb-cubeeye-offset <path>`: RGB-CubeEye offset config 경로를 지정한다. 기본값은 `config/rgb_cubeeye_offset.json`이다.
 - `--cubeeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
 - `depth`와 `pointcloud`는 CubeEye SDK 제약으로 동시에 선택할 수 없다.
 - `--cubeeye-camera-fps <fps>`: CubeEye S111D camera framerate를 지정한다. 허용값은 `7`, `15`, `30`이다.
-- `--rgb-cubeeye-offset-u <value>`: RGB 좌표를 CubeEye pointcloud 좌표로 옮길 때 더할 정규화 U 오프셋이다. 기본값은 `0.00`이다.
-- `--rgb-cubeeye-offset-v <value>`: RGB 좌표를 CubeEye pointcloud 좌표로 옮길 때 더할 정규화 V 오프셋이다. 기본값은 `0.40`이다.
 - `--pointcloud-downsample <stride>`: pointcloud 송출 downsample 간격을 지정한다. 기본값은 `4`다.
 
 ## detector 실행 예시
@@ -118,9 +117,9 @@ Camera Module 3 + CubeEye:
 RGB↔CubeEye 오프셋 조정:
 
 ```bash
-./bin/catcheye-pick --camera-input rgb-cubeeye --detector ncnn --ws --cubeeye-frames pointcloud \
-  --rgb-cubeeye-offset-u 0.00 \
-  --rgb-cubeeye-offset-v 0.40
+curl -X PUT http://localhost:8090/api/rgb-cubeeye-offset \
+  -H 'Content-Type: application/json' \
+  -d '{"u":0.00,"v":0.40}'
 ```
 
 ## viewer-only 예시

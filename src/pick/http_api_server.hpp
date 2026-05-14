@@ -21,6 +21,7 @@ class HttpApiServer final {
         HttpApiServerConfig config,
         std::string roi_config_path,
         std::string pallet_roi_config_path,
+        std::string rgb_cubeeye_offset_config_path,
         PickProcessor* processor,
         CubeEyeCameraSession* cubeeye);
     ~HttpApiServer();
@@ -37,6 +38,7 @@ class HttpApiServer final {
     HttpApiServerConfig config_;
     std::string roi_config_path_;
     std::string pallet_roi_config_path_;
+    std::string rgb_cubeeye_offset_config_path_;
     PickProcessor* processor_ = nullptr;
     CubeEyeCameraSession* cubeeye_ = nullptr;
     std::unique_ptr<catcheye::http::HttpServer> server_;

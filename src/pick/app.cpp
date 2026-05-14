@@ -27,6 +27,7 @@
 #include "pick/cubeeye_camera.hpp"
 #include "pick/http_api_server.hpp"
 #include "pick/processor.hpp"
+#include "pick/rgb_cubeeye_offset_repository.hpp"
 #include "pick/viewer_metadata.hpp"
 
 namespace catcheye::pick {
@@ -54,10 +55,9 @@ void print_usage() {
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
               << "  --roi <path>              Person ROI config path\n"
               << "  --pallet-roi <path>       Pallet ROI config path\n"
+              << "  --rgb-cubeeye-offset <path>  RGB to CubeEye offset config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
               << "  --cubeeye-camera-fps <fps>  CubeEye S111D camera framerate: 7 | 15 | 30\n"
-              << "  --rgb-cubeeye-offset-u <value>  RGB to CubeEye normalized U offset (default: 0.00)\n"
-              << "  --rgb-cubeeye-offset-v <value>  RGB to CubeEye normalized V offset (default: 0.40)\n"
               << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
 }
 
@@ -470,6 +470,7 @@ int run_viewer_only(AppBootstrap bootstrap) {
 
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
+    const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
     PickProcessor processor(std::move(bootstrap.processor_config));
     if (!processor.initialize()) {
         throw std::runtime_error("failed to initialize pick processor");
@@ -478,6 +479,7 @@ int run_viewer_only(AppBootstrap bootstrap) {
         bootstrap.http_api_server_config,
         http_roi_config_path,
         http_pallet_roi_config_path,
+        http_rgb_cubeeye_offset_config_path,
         &processor,
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
@@ -584,6 +586,7 @@ int run_pick_detection(AppBootstrap bootstrap)
 
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
+    const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
     std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
     const int cubeeye_camera_fps = bootstrap.cubeeye_camera_fps;
     PickProcessor processor(std::move(bootstrap.processor_config));
@@ -610,6 +613,7 @@ int run_pick_detection(AppBootstrap bootstrap)
         bootstrap.http_api_server_config,
         http_roi_config_path,
         http_pallet_roi_config_path,
+        http_rgb_cubeeye_offset_config_path,
         &processor,
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
@@ -785,6 +789,11 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--pallet-roi requires a value");
             }
             options.pallet_roi_config_path = argv[++i];
+        } else if (arg == "--rgb-cubeeye-offset") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--rgb-cubeeye-offset requires a value");
+            }
+            options.rgb_cubeeye_offset_config_path = argv[++i];
         } else if (arg == "--cubeeye-frames") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--cubeeye-frames requires a value");
@@ -798,15 +807,9 @@ AppOptions parse_app_options(int argc, char** argv) {
             }
             options.pointcloud_downsample = std::stoi(argv[++i]);
         } else if (arg == "--rgb-cubeeye-offset-u") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--rgb-cubeeye-offset-u requires a value");
-            }
-            options.rgb_cubeeye_offset_u = std::stof(argv[++i]);
+            throw std::invalid_argument("--rgb-cubeeye-offset-u was removed; use --rgb-cubeeye-offset or PUT /api/rgb-cubeeye-offset");
         } else if (arg == "--rgb-cubeeye-offset-v") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--rgb-cubeeye-offset-v requires a value");
-            }
-            options.rgb_cubeeye_offset_v = std::stof(argv[++i]);
+            throw std::invalid_argument("--rgb-cubeeye-offset-v was removed; use --rgb-cubeeye-offset or PUT /api/rgb-cubeeye-offset");
         } else if (arg == "--cubeeye-camera-fps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--cubeeye-camera-fps requires a value");
@@ -851,11 +854,6 @@ AppOptions parse_app_options(int argc, char** argv) {
     }
     if (options.num_threads <= 0) {
         throw std::invalid_argument("--num-threads must be a positive integer");
-    }
-    if (!std::isfinite(options.rgb_cubeeye_offset_u) || !std::isfinite(options.rgb_cubeeye_offset_v) ||
-        options.rgb_cubeeye_offset_u < -1.0F || options.rgb_cubeeye_offset_u > 1.0F || options.rgb_cubeeye_offset_v < -1.0F ||
-        options.rgb_cubeeye_offset_v > 1.0F) {
-        throw std::invalid_argument("RGB CubeEye offsets must be between -1.0 and 1.0");
     }
     if (options.cubeeye_camera_fps_set && !is_supported_cubeeye_camera_fps(options.cubeeye_camera_fps)) {
         throw std::invalid_argument("--cubeeye-camera-fps supports S111D values only: 7, 15, 30");
@@ -914,10 +912,11 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
         : options.metadata_path;
     hailo_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
-    bootstrap.processor_config.rgb_cubeeye_offset = RgbCubeEyeOffset{
-        .u = options.rgb_cubeeye_offset_u,
-        .v = options.rgb_cubeeye_offset_v,
-    };
+    bootstrap.rgb_cubeeye_offset_config_path = options.rgb_cubeeye_offset_config_path.empty()
+        ? resolve_default_config_path(executable_path, "rgb_cubeeye_offset.json")
+        : options.rgb_cubeeye_offset_config_path;
+    bootstrap.processor_config.rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
+    bootstrap.processor_config.rgb_cubeeye_offset = load_rgb_cubeeye_offset_config(bootstrap.rgb_cubeeye_offset_config_path);
     bootstrap.cubeeye_camera_fps = options.cubeeye_camera_fps;
     bootstrap.processor_config.roi_config_path = options.roi_config_path.empty()
         ? resolve_default_config_path(executable_path, "roi_cam_default.json")
@@ -983,9 +982,10 @@ int run_app(int argc, char** argv) {
         std::cerr << ", detector='" << detector_backend_name(options.detector_backend) << "'";
     }
     if (uses_cubeeye(options.camera_input_mode)) {
+        const RgbCubeEyeOffset rgb_cubeeye_offset = bootstrap.processor_config.rgb_cubeeye_offset;
         std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
                   << ", pointcloud_downsample=" << options.pointcloud_downsample
-                  << ", rgb_cubeeye_offset=(" << options.rgb_cubeeye_offset_u << ',' << options.rgb_cubeeye_offset_v << ')';
+                  << ", rgb_cubeeye_offset=(" << rgb_cubeeye_offset.u << ',' << rgb_cubeeye_offset.v << ')';
         if (options.cubeeye_camera_fps_set) {
             std::cerr << ", cubeeye_camera_fps=" << options.cubeeye_camera_fps;
         }
