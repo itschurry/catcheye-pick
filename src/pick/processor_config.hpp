@@ -21,6 +21,29 @@ struct RgbCubeEyeOffset {
     float v = 0.40F;
 };
 
+struct PointCloudRoiConfig {
+    bool enabled = false;
+    bool apply_to_viewer = true;
+    float min_x_m = -1.0F;
+    float max_x_m = 1.0F;
+    float min_y_m = -1.0F;
+    float max_y_m = 1.0F;
+    float min_z_m = 0.0F;
+    float max_z_m = 2.0F;
+};
+
+struct RobotTransformConfig {
+    float translation_m[3] = {0.0F, 0.0F, 0.0F};
+    float rotation_rpy_deg[3] = {0.0F, 0.0F, 0.0F};
+};
+
+struct RobotCalibrationConfig {
+    bool enabled = false;
+    RobotTransformConfig r1;
+    RobotTransformConfig r2;
+    float min_confidence = 0.50F;
+};
+
 struct PickProcessorConfig {
     bool detection_enabled = true;
     catcheye::DetectorFactoryConfig detector;
@@ -34,6 +57,10 @@ struct PickProcessorConfig {
     bool pallet_roi_enabled = false;
     std::string pallet_roi_config_path;
     catcheye::roi::CameraRoiConfig pallet_roi_config;
+    std::string pointcloud_roi_config_path;
+    PointCloudRoiConfig pointcloud_roi_config;
+    std::string robot_calibration_config_path;
+    RobotCalibrationConfig robot_calibration;
 };
 
 std::vector<CubeEyeFrameSpec> parse_cubeeye_frames(std::string_view value);

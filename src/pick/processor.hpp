@@ -27,6 +27,35 @@ struct ViewerPayload {
     std::vector<std::uint8_t> bytes;
 };
 
+struct RobotPoint {
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+};
+
+struct PickCandidate {
+    int id = 0;
+    std::string product_id;
+    float confidence = 0.0F;
+    float center_x = 0.0F;
+    float center_y = 0.0F;
+    float center_z = 0.0F;
+    float roll_deg = 0.0F;
+    float pitch_deg = 0.0F;
+    float yaw_deg = 0.0F;
+    float min_x = 0.0F;
+    float min_y = 0.0F;
+    float min_z = 0.0F;
+    float max_x = 0.0F;
+    float max_y = 0.0F;
+    float max_z = 0.0F;
+    float pick_x = 0.0F;
+    float pick_y = 0.0F;
+    float pick_z = 0.0F;
+    std::optional<RobotPoint> r1;
+    std::optional<RobotPoint> r2;
+};
+
 struct PickViewerFrame {
     std::uint64_t frame_index = 0;
     std::vector<ViewerPayload> payloads;
@@ -61,6 +90,7 @@ struct PickDetectionResult {
 struct PickDetectionFrame {
     std::uint64_t frame_index = 0;
     std::vector<PickDetectionResult> detections;
+    std::vector<PickCandidate> pick_candidates;
 };
 
 class PickProcessor final {
@@ -77,9 +107,13 @@ class PickProcessor final {
         const CubeEyeFrameSet& cubeeye_frames,
         std::uint64_t frame_index) const;
     RgbCubeEyeOffset rgb_cubeeye_offset() const;
+    PointCloudRoiConfig pointcloud_roi_config() const;
+    RobotCalibrationConfig robot_calibration() const;
     bool update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_rgb_cubeeye_offset(RgbCubeEyeOffset offset);
+    bool update_pointcloud_roi_config(PointCloudRoiConfig config);
+    bool update_robot_calibration(RobotCalibrationConfig config);
 
   private:
     struct RoiSnapshot {

@@ -69,6 +69,46 @@ void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& 
     oss << "]";
 }
 
+void append_robot_point(std::ostringstream& oss, const RobotPoint& point)
+{
+    oss << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"z\":" << point.z << "}";
+}
+
+void append_pick_candidate_fields(std::ostringstream& oss, const PickDetectionFrame* frame)
+{
+    if (frame == nullptr) {
+        oss << "\"pick_candidate_count\":0,\"pick_candidates\":[]";
+        return;
+    }
+
+    oss << "\"pick_candidate_count\":" << frame->pick_candidates.size() << ",\"pick_candidates\":[";
+    for (std::size_t i = 0; i < frame->pick_candidates.size(); ++i) {
+        const auto& candidate = frame->pick_candidates[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"id\":" << candidate.id << ",\"product_id\":\"" << escape_json(candidate.product_id)
+            << "\",\"confidence\":" << candidate.confidence << ",\"center_camera_m\":[" << candidate.center_x << ','
+            << candidate.center_y << ',' << candidate.center_z << "],\"pose_camera\":{\"translation\":[" << candidate.center_x << ','
+            << candidate.center_y << ',' << candidate.center_z << "],\"rotation_rpy_deg\":[" << candidate.roll_deg << ','
+            << candidate.pitch_deg << ',' << candidate.yaw_deg << "]},\"bbox_camera_m\":[" << candidate.min_x << ','
+            << candidate.min_y << ',' << candidate.min_z << ',' << candidate.max_x << ',' << candidate.max_y << ','
+            << candidate.max_z << "],\"pick_point_camera_m\":[" << candidate.pick_x << ',' << candidate.pick_y << ','
+            << candidate.pick_z << "],\"robot\":";
+        if (candidate.r1.has_value() && candidate.r2.has_value()) {
+            oss << "{\"r1\":";
+            append_robot_point(oss, *candidate.r1);
+            oss << ",\"r2\":";
+            append_robot_point(oss, *candidate.r2);
+            oss << "}";
+        } else {
+            oss << "null";
+        }
+        oss << "}";
+    }
+    oss << "]";
+}
+
 } // namespace
 
 std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only, const PickDetectionFrame* detection_frame)
@@ -84,6 +124,8 @@ std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only
         append_detection_fields(oss, *detection_frame);
         oss << ',';
     }
+    append_pick_candidate_fields(oss, detection_frame);
+    oss << ',';
     oss << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
         const auto& payload = frame.payloads[i];
@@ -107,6 +149,8 @@ std::string build_detection_metadata(const PickDetectionFrame& frame)
     std::ostringstream oss;
     oss << "{\"viewer_only\":false,";
     append_detection_fields(oss, frame);
+    oss << ',';
+    append_pick_candidate_fields(oss, &frame);
     oss << "}";
     return oss.str();
 }
