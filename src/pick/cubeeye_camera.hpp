@@ -21,9 +21,17 @@ struct CubeEyeFrameEntry {
     meere::sensor::sptr_frame frame;
 };
 
+struct CubeEyeIntrinsics {
+    float fx = 0.0F;
+    float fy = 0.0F;
+    float cx = 0.0F;
+    float cy = 0.0F;
+};
+
 struct CubeEyeFrameSet {
     std::uint64_t sequence = 0;
     std::vector<CubeEyeFrameEntry> frames;
+    std::optional<CubeEyeIntrinsics> intrinsics;
 };
 
 class CubeEyeCameraSession final {
@@ -51,6 +59,7 @@ class CubeEyeCameraSession final {
         void onCubeEyeCameraError(const meere::sensor::ptr_source source, meere::sensor::CameraError error) override;
         void onCubeEyeFrameList(const meere::sensor::ptr_source source, const meere::sensor::sptr_frame_list& frames) override;
 
+        void set_intrinsics(CubeEyeIntrinsics intrinsics);
         CubeEyeFrameSet wait_for_frames(std::uint64_t last_sequence);
         std::uint64_t sequence() const;
 
@@ -59,6 +68,7 @@ class CubeEyeCameraSession final {
         mutable std::mutex mutex_;
         std::condition_variable cv_;
         std::optional<CubeEyeFrameSet> latest_;
+        std::optional<CubeEyeIntrinsics> intrinsics_;
         std::optional<std::string> error_;
         std::uint64_t sequence_ = 0;
     };

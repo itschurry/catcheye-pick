@@ -630,6 +630,8 @@ int run_pick_detection(AppBootstrap bootstrap)
     std::atomic_bool running{true};
     std::mutex worker_error_mutex;
     std::exception_ptr worker_error;
+    std::mutex latest_detection_mutex;
+    std::optional<PickDetectionFrame> latest_detection_frame;
     auto capture_worker_error = [&] {
         {
             std::lock_guard<std::mutex> lock(worker_error_mutex);
@@ -648,7 +650,15 @@ int run_pick_detection(AppBootstrap bootstrap)
                 while (running) {
                     CubeEyeFrameSet cubeeye_frames = cubeeye_reader->latest_after(published_cubeeye_sequence);
                     PickViewerFrame cubeeye_viewer_frame = processor.process_viewer_frame(std::nullopt, cubeeye_frames, cubeeye_frames.sequence);
-                    const std::string cubeeye_metadata = build_viewer_metadata(cubeeye_viewer_frame, false, nullptr);
+                    std::optional<PickDetectionFrame> detection_snapshot;
+                    {
+                        std::lock_guard<std::mutex> lock(latest_detection_mutex);
+                        detection_snapshot = latest_detection_frame;
+                    }
+                    const std::string cubeeye_metadata = build_viewer_metadata(
+                        cubeeye_viewer_frame,
+                        false,
+                        detection_snapshot ? &*detection_snapshot : nullptr);
                     async_publisher->publish_with_metadata("cubeeye", std::move(cubeeye_metadata), std::move(cubeeye_viewer_frame));
                     published_cubeeye_sequence = cubeeye_frames.sequence;
                 }
@@ -678,6 +688,10 @@ int run_pick_detection(AppBootstrap bootstrap)
             }
 
             PickDetectionFrame detection_frame = processor.process_detection_frame(rgb_snapshot.frame, cubeeye_frames, ++frame_index);
+            {
+                std::lock_guard<std::mutex> lock(latest_detection_mutex);
+                latest_detection_frame = detection_frame;
+            }
             if (async_publisher) {
                 std::vector<catcheye::Detection> detections;
                 detections.reserve(detection_frame.detections.size());

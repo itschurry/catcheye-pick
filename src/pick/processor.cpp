@@ -20,6 +20,13 @@ const CubeEyeFrameEntry* find_pointcloud_frame(const CubeEyeFrameSet& frame_set)
     return it == frame_set.frames.end() ? nullptr : &*it;
 }
 
+const CubeEyeFrameEntry* find_depth_frame(const CubeEyeFrameSet& frame_set)
+{
+    const auto it = std::find_if(frame_set.frames.begin(), frame_set.frames.end(),
+                                 [](const CubeEyeFrameEntry& entry) { return entry.spec.type == meere::sensor::FrameType::Depth; });
+    return it == frame_set.frames.end() ? nullptr : &*it;
+}
+
 } // namespace
 
 PickProcessor::PickProcessor(PickProcessorConfig config)
@@ -108,12 +115,14 @@ PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input:
     output.frame_index = frame_index;
     const std::vector<catcheye::Detection> detections = detector_->detect(camera_frame);
     const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(cubeeye_frames);
+    const CubeEyeFrameEntry* depth_frame = find_depth_frame(cubeeye_frames);
+    const CubeEyeFrameEntry* position_frame = pointcloud_frame != nullptr ? pointcloud_frame : depth_frame;
     const RgbCubeEyeOffset rgb_cubeeye_offset = this->rgb_cubeeye_offset();
     output.detections.reserve(detections.size());
     for (const auto& detection : detections) {
         std::optional<PickDetectionResult::ObjectPosition> position;
-        if (pointcloud_frame != nullptr) {
-            position = estimate_object_position(detection.box, camera_frame, *pointcloud_frame, rgb_cubeeye_offset);
+        if (position_frame != nullptr) {
+            position = estimate_object_position(detection.box, camera_frame, *position_frame, cubeeye_frames.intrinsics, rgb_cubeeye_offset);
         }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,

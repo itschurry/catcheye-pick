@@ -96,8 +96,15 @@ void CubeEyeCameraSession::CaptureSink::onCubeEyeFrameList(
 
     std::lock_guard<std::mutex> lock(mutex_);
     frame_set.sequence = ++sequence_;
+    frame_set.intrinsics = intrinsics_;
     latest_ = std::move(frame_set);
     cv_.notify_all();
+}
+
+void CubeEyeCameraSession::CaptureSink::set_intrinsics(CubeEyeIntrinsics intrinsics)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    intrinsics_ = intrinsics;
 }
 
 CubeEyeFrameSet CubeEyeCameraSession::CaptureSink::wait_for_frames(std::uint64_t last_sequence)
@@ -148,6 +155,19 @@ void CubeEyeCameraSession::open()
     }
     if (camera_->prepare() != meere::sensor::result::success) {
         throw std::runtime_error("failed to prepare CubeEye camera");
+    }
+    meere::sensor::IntrinsicParameters intrinsics;
+    if (camera_->intrinsicParameters(intrinsics) == meere::sensor::result::success) {
+        capture_.set_intrinsics(CubeEyeIntrinsics{
+            .fx = intrinsics.focal.fx,
+            .fy = intrinsics.focal.fy,
+            .cx = intrinsics.principal.cx,
+            .cy = intrinsics.principal.cy,
+        });
+        std::cerr << "CubeEye intrinsics fx=" << intrinsics.focal.fx
+                  << " fy=" << intrinsics.focal.fy
+                  << " cx=" << intrinsics.principal.cx
+                  << " cy=" << intrinsics.principal.cy << '\n';
     }
     if (camera_fps_ > 0) {
         const auto property = meere::sensor::make_property_8u(

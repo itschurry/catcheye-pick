@@ -1,6 +1,5 @@
 #include "pick/viewer_payload_builder.hpp"
 
-#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -19,9 +18,6 @@
 
 namespace catcheye::pick {
 namespace {
-
-constexpr int WEBSOCKET_CAMERA_MAX_WIDTH = 1280;
-constexpr int WEBSOCKET_CAMERA_MAX_HEIGHT = 720;
 
 cv::Mat frame_to_bgr(const catcheye::input::Frame& frame)
 {
@@ -87,20 +83,6 @@ std::vector<std::uint8_t> encode_jpeg(const cv::Mat& bgr)
         throw std::runtime_error("failed to encode JPEG frame");
     }
     return jpeg;
-}
-
-cv::Mat limit_camera_payload_resolution(const cv::Mat& bgr)
-{
-    if (bgr.cols <= WEBSOCKET_CAMERA_MAX_WIDTH && bgr.rows <= WEBSOCKET_CAMERA_MAX_HEIGHT) {
-        return bgr;
-    }
-
-    const double scale = std::min(
-        static_cast<double>(WEBSOCKET_CAMERA_MAX_WIDTH) / static_cast<double>(bgr.cols),
-        static_cast<double>(WEBSOCKET_CAMERA_MAX_HEIGHT) / static_cast<double>(bgr.rows));
-    cv::Mat resized;
-    cv::resize(bgr, resized, cv::Size(), scale, scale, cv::INTER_AREA);
-    return resized;
 }
 
 cv::Mat normalize_u16_frame_to_bgr(const meere::sensor::sptr_frame& frame)
@@ -214,7 +196,7 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
 
 ViewerPayload camera_payload(const catcheye::input::Frame& frame)
 {
-    const cv::Mat bgr = limit_camera_payload_resolution(frame_to_bgr(frame));
+    const cv::Mat bgr = frame_to_bgr(frame);
     if (bgr.empty()) {
         throw std::runtime_error("failed to convert Camera Module 3 frame");
     }
