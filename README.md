@@ -84,6 +84,7 @@ scripts/cmake.sh configure
 scripts/cmake.sh build
 scripts/cmake.sh install
 scripts/cmake.sh verify
+scripts/cmake.sh compile-db
 scripts/cmake.sh all
 scripts/cmake.sh clean
 ```
@@ -102,6 +103,24 @@ scripts/cmake.sh all release-hailo
 CATCHEYE_PICK_CONTAINER=catcheye-pick-develop-raspbian \
 CATCHEYE_PICK_CONTAINER_WORKDIR=/home/user/catcheye-pick \
 scripts/cmake.sh build
+```
+
+`scripts/cmake.sh build`는 컨테이너에서 생성된 `compile_commands.json`의 프로젝트 경로를 현재 맥 체크아웃 경로로 변환한 뒤 `build/compile_commands.json`과 루트 `compile_commands.json`에 연결한다.
+이미 빌드된 profile의 compile DB만 다시 맞출 때는 아래처럼 실행한다.
+
+```bash
+scripts/cmake.sh compile-db
+scripts/cmake.sh compile-db debug
+scripts/cmake.sh compile-db release
+scripts/cmake.sh compile-db release-hailo
+```
+
+컨테이너 작업 경로나 맥 체크아웃 경로가 기본값과 다르면 명시한다.
+
+```bash
+CATCHEYE_PICK_CONTAINER_WORKDIR=/home/user/catcheye-pick \
+CATCHEYE_PICK_HOST_WORKDIR=/Users/chlee/catcheye-pick \
+scripts/cmake.sh compile-db release-hailo
 ```
 
 ## 실행 옵션

@@ -14,6 +14,7 @@ Commands:
   build       Build
   install     Install
   verify      Run installed app --help
+  compile-db  Sync compile_commands.json for host tools
   clean       Remove build/install and clean log
   all         Configure, build, install, verify
 
@@ -81,7 +82,8 @@ configure() {
 }
 
 build() {
-  in_container "cmake --build '$(build_dir)' --config '$(config_name)' -- -j \$(nproc) && mkdir -p build && ln -sf \$(realpath '$(build_dir)'/compile_commands.json) build/compile_commands.json"
+  in_container "cmake --build '$(build_dir)' --config '$(config_name)' -- -j \$(nproc)"
+  scripts/sync-compile-commands.sh "$profile"
 }
 
 install_app() {
@@ -99,6 +101,7 @@ clean() {
 case "$command" in
   configure) configure ;;
   build) build ;;
+  compile-db) scripts/sync-compile-commands.sh "$profile" ;;
   install) install_app ;;
   verify) verify ;;
   clean) clean ;;
