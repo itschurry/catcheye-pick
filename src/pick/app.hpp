@@ -17,7 +17,7 @@ enum class PublisherType {
     WebSocket,
 };
 
-enum class CameraInputMode {
+enum class RgbdSourceProfile {
     RgbCubeEye,
     RgbOnly,
     CubeEyeOnly,
@@ -31,7 +31,7 @@ struct AppOptions {
     PublisherType publisher_type = PublisherType::None;
     int websocket_port = 8080;
     int http_port = 8090;
-    CameraInputMode camera_input_mode = CameraInputMode::RgbCubeEye;
+    RgbdSourceProfile source_profile = RgbdSourceProfile::RgbCubeEye;
     std::string camera_pipeline;
     std::string cubeeye_frames = "depth,amplitude";
     std::string roi_config_path;

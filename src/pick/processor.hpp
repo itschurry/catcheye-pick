@@ -12,6 +12,7 @@
 #include "catcheye/roi/camera_roi_config.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/processor_config.hpp"
+#include "pick/rgbd_frame.hpp"
 
 namespace catcheye::pick {
 
@@ -98,14 +99,8 @@ class PickProcessor final {
     explicit PickProcessor(PickProcessorConfig config);
 
     bool initialize();
-    PickDetectionFrame process_detection_frame(
-        const catcheye::input::Frame& camera_frame,
-        const CubeEyeFrameSet& cubeeye_frames,
-        std::uint64_t frame_index);
-    PickViewerFrame process_viewer_frame(
-        const std::optional<catcheye::input::Frame>& camera_frame,
-        const CubeEyeFrameSet& cubeeye_frames,
-        std::uint64_t frame_index) const;
+    PickDetectionFrame process_detection_frame(const RgbdFrame& frame);
+    PickViewerFrame process_viewer_frame(const RgbdFrame& frame) const;
     RgbCubeEyeOffset rgb_cubeeye_offset() const;
     PointCloudRoiConfig pointcloud_roi_config() const;
     RobotCalibrationConfig robot_calibration() const;

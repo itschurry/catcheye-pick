@@ -220,19 +220,21 @@ bool PickProcessor::update_robot_calibration(RobotCalibrationConfig config)
     return true;
 }
 
-PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input::Frame& camera_frame,
-                                                          const CubeEyeFrameSet& cubeeye_frames,
-                                                          std::uint64_t frame_index)
+PickDetectionFrame PickProcessor::process_detection_frame(const RgbdFrame& frame)
 {
     if (!config_.detection_enabled || !detector_) {
         throw std::runtime_error("pick detection pipeline is disabled");
     }
+    if (!frame.color.has_value()) {
+        throw std::runtime_error("pick detection requires color input");
+    }
 
     PickDetectionFrame output;
-    output.frame_index = frame_index;
-    const std::vector<catcheye::Detection> detections = detector_->detect(camera_frame);
-    const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(cubeeye_frames);
-    const CubeEyeFrameEntry* depth_frame = find_depth_frame(cubeeye_frames);
+    output.frame_index = frame.frame_index;
+    const catcheye::input::Frame& color_frame = *frame.color;
+    const std::vector<catcheye::Detection> detections = detector_->detect(color_frame);
+    const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(frame.depth);
+    const CubeEyeFrameEntry* depth_frame = find_depth_frame(frame.depth);
     const CubeEyeFrameEntry* position_frame = pointcloud_frame != nullptr ? pointcloud_frame : depth_frame;
     const RgbCubeEyeOffset rgb_cubeeye_offset = this->rgb_cubeeye_offset();
     const RobotCalibrationConfig robot_calibration = this->robot_calibration();
@@ -242,7 +244,7 @@ PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input:
     for (const auto& detection : detections) {
         std::optional<PickDetectionResult::ObjectPosition> position;
         if (position_frame != nullptr) {
-            position = estimate_object_position(detection.box, camera_frame, *position_frame, cubeeye_frames.intrinsics, rgb_cubeeye_offset);
+            position = estimate_object_position(detection.box, color_frame, *position_frame, frame.depth.intrinsics, rgb_cubeeye_offset);
         }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,
@@ -259,25 +261,23 @@ PickDetectionFrame PickProcessor::process_detection_frame(const catcheye::input:
     return output;
 }
 
-PickViewerFrame PickProcessor::process_viewer_frame(const std::optional<catcheye::input::Frame>& camera_frame,
-                                                    const CubeEyeFrameSet& cubeeye_frames,
-                                                    std::uint64_t frame_index) const
+PickViewerFrame PickProcessor::process_viewer_frame(const RgbdFrame& frame) const
 {
     PickViewerFrame output;
-    output.frame_index = frame_index;
+    output.frame_index = frame.frame_index;
     const RoiSnapshot roi = roi_snapshot();
     const RoiSnapshot pallet_roi = pallet_roi_snapshot();
     output.roi_enabled = roi.enabled;
     output.roi_config = roi.config;
     output.pallet_roi_enabled = pallet_roi.enabled;
     output.pallet_roi_config = pallet_roi.config;
-    output.payloads.reserve(1U + cubeeye_frames.frames.size());
-    if (camera_frame.has_value()) {
-        output.payloads.push_back(camera_payload(*camera_frame));
+    output.payloads.reserve(1U + frame.depth.frames.size());
+    if (frame.color.has_value()) {
+        output.payloads.push_back(camera_payload(*frame.color));
     }
     const PointCloudRoiConfig pointcloud_roi = pointcloud_roi_config();
-    for (const auto& frame : cubeeye_frames.frames) {
-        output.payloads.push_back(cubeeye_payload(frame, config_.pointcloud_downsample, pointcloud_roi));
+    for (const auto& depth_frame : frame.depth.frames) {
+        output.payloads.push_back(cubeeye_payload(depth_frame, config_.pointcloud_downsample, pointcloud_roi));
     }
     return output;
 }
