@@ -28,7 +28,7 @@
 #include "pick/http_api_server.hpp"
 #include "pick/pointcloud_roi_repository.hpp"
 #include "pick/processor.hpp"
-#include "pick/rgb_cubeeye_offset_repository.hpp"
+#include "pick/calibration_config_repository.hpp"
 #include "pick/robot_calibration_repository.hpp"
 #include "pick/viewer_metadata.hpp"
 
@@ -57,7 +57,8 @@ void print_usage() {
               << "  --camera-pipeline <pipe>  GStreamer pipeline for Camera Module 3\n"
               << "  --roi <path>              Person ROI config path\n"
               << "  --pallet-roi <path>       Pallet ROI config path\n"
-              << "  --rgb-cubeeye-offset <path>  RGB to CubeEye offset config path\n"
+              << "  --rgb-intrinsic <path>  RGB intrinsic config path\n"
+              << "  --rgb-cubeeye-extrinsic <path>  RGB to CubeEye extrinsic config path\n"
               << "  --pointcloud-roi <path>  PointCloud X/Y/Z ROI config path\n"
               << "  --robot-calibration <path>  Robot calibration config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
@@ -490,7 +491,8 @@ int run_viewer_only(AppBootstrap bootstrap) {
 
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
-    const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
+    const std::string http_rgb_intrinsic_config_path = bootstrap.rgb_intrinsic_config_path;
+    const std::string http_rgb_cubeeye_extrinsic_config_path = bootstrap.rgb_cubeeye_extrinsic_config_path;
     const std::string http_pointcloud_roi_config_path = bootstrap.pointcloud_roi_config_path;
     const std::string http_robot_calibration_config_path = bootstrap.robot_calibration_config_path;
     PickProcessor processor(std::move(bootstrap.processor_config));
@@ -501,7 +503,8 @@ int run_viewer_only(AppBootstrap bootstrap) {
         bootstrap.http_api_server_config,
         http_roi_config_path,
         http_pallet_roi_config_path,
-        http_rgb_cubeeye_offset_config_path,
+        http_rgb_intrinsic_config_path,
+        http_rgb_cubeeye_extrinsic_config_path,
         http_pointcloud_roi_config_path,
         http_robot_calibration_config_path,
         &processor,
@@ -629,7 +632,8 @@ int run_pick_detection(AppBootstrap bootstrap)
 
     const std::string http_roi_config_path = bootstrap.processor_config.roi_config_path;
     const std::string http_pallet_roi_config_path = bootstrap.processor_config.pallet_roi_config_path;
-    const std::string http_rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
+    const std::string http_rgb_intrinsic_config_path = bootstrap.rgb_intrinsic_config_path;
+    const std::string http_rgb_cubeeye_extrinsic_config_path = bootstrap.rgb_cubeeye_extrinsic_config_path;
     const std::string http_pointcloud_roi_config_path = bootstrap.pointcloud_roi_config_path;
     const std::string http_robot_calibration_config_path = bootstrap.robot_calibration_config_path;
     std::vector<CubeEyeFrameSpec> cubeeye_frame_specs = bootstrap.processor_config.cubeeye_frames;
@@ -658,7 +662,8 @@ int run_pick_detection(AppBootstrap bootstrap)
         bootstrap.http_api_server_config,
         http_roi_config_path,
         http_pallet_roi_config_path,
-        http_rgb_cubeeye_offset_config_path,
+        http_rgb_intrinsic_config_path,
+        http_rgb_cubeeye_extrinsic_config_path,
         http_pointcloud_roi_config_path,
         http_robot_calibration_config_path,
         &processor,
@@ -847,11 +852,16 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--pallet-roi requires a value");
             }
             options.pallet_roi_config_path = argv[++i];
-        } else if (arg == "--rgb-cubeeye-offset") {
+        } else if (arg == "--rgb-intrinsic") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--rgb-cubeeye-offset requires a value");
+                throw std::invalid_argument("--rgb-intrinsic requires a value");
             }
-            options.rgb_cubeeye_offset_config_path = argv[++i];
+            options.rgb_intrinsic_config_path = argv[++i];
+        } else if (arg == "--rgb-cubeeye-extrinsic") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--rgb-cubeeye-extrinsic requires a value");
+            }
+            options.rgb_cubeeye_extrinsic_config_path = argv[++i];
         } else if (arg == "--pointcloud-roi") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--pointcloud-roi requires a value");
@@ -880,9 +890,11 @@ AppOptions parse_app_options(int argc, char** argv) {
             }
             options.depth_projection_downsample = std::stoi(argv[++i]);
         } else if (arg == "--rgb-cubeeye-offset-u") {
-            throw std::invalid_argument("--rgb-cubeeye-offset-u was removed; use --rgb-cubeeye-offset or PUT /api/rgb-cubeeye-offset");
+            throw std::invalid_argument("--rgb-cubeeye-offset-u was removed; use --rgb-cubeeye-extrinsic or PUT /api/rgb-cubeeye/extrinsic");
         } else if (arg == "--rgb-cubeeye-offset-v") {
-            throw std::invalid_argument("--rgb-cubeeye-offset-v was removed; use --rgb-cubeeye-offset or PUT /api/rgb-cubeeye-offset");
+            throw std::invalid_argument("--rgb-cubeeye-offset-v was removed; use --rgb-cubeeye-extrinsic or PUT /api/rgb-cubeeye/extrinsic");
+        } else if (arg == "--rgb-cubeeye-offset") {
+            throw std::invalid_argument("--rgb-cubeeye-offset was removed; use --rgb-cubeeye-extrinsic");
         } else if (arg == "--cubeeye-camera-fps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--cubeeye-camera-fps requires a value");
@@ -989,11 +1001,16 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     hailo_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
     bootstrap.processor_config.depth_projection_downsample = options.depth_projection_downsample;
-    bootstrap.rgb_cubeeye_offset_config_path = options.rgb_cubeeye_offset_config_path.empty()
-        ? resolve_default_config_path(executable_path, "rgb_cubeeye_offset.json")
-        : options.rgb_cubeeye_offset_config_path;
-    bootstrap.processor_config.rgb_cubeeye_offset_config_path = bootstrap.rgb_cubeeye_offset_config_path;
-    bootstrap.processor_config.rgb_cubeeye_offset = load_rgb_cubeeye_offset_config(bootstrap.rgb_cubeeye_offset_config_path);
+    bootstrap.rgb_intrinsic_config_path = options.rgb_intrinsic_config_path.empty()
+        ? resolve_default_config_path(executable_path, "rgb_intrinsic.json")
+        : options.rgb_intrinsic_config_path;
+    bootstrap.processor_config.rgb_intrinsic_config_path = bootstrap.rgb_intrinsic_config_path;
+    bootstrap.processor_config.rgb_intrinsic = load_rgb_intrinsic_config(bootstrap.rgb_intrinsic_config_path);
+    bootstrap.rgb_cubeeye_extrinsic_config_path = options.rgb_cubeeye_extrinsic_config_path.empty()
+        ? resolve_default_config_path(executable_path, "rgb_cubeeye_extrinsic.json")
+        : options.rgb_cubeeye_extrinsic_config_path;
+    bootstrap.processor_config.rgb_cubeeye_extrinsic_config_path = bootstrap.rgb_cubeeye_extrinsic_config_path;
+    bootstrap.processor_config.rgb_cubeeye_extrinsic = load_rgb_cubeeye_extrinsic_config(bootstrap.rgb_cubeeye_extrinsic_config_path);
     bootstrap.pointcloud_roi_config_path = options.pointcloud_roi_config_path.empty()
         ? resolve_default_config_path(executable_path, "pointcloud_roi.json")
         : options.pointcloud_roi_config_path;
@@ -1069,16 +1086,21 @@ int run_app(int argc, char** argv) {
         std::cerr << ", detector='" << detector_backend_name(options.detector_backend) << "'";
     }
     if (source_uses_depth(options.source_profile)) {
-        const RgbCubeEyeOffset rgb_cubeeye_offset = bootstrap.processor_config.rgb_cubeeye_offset;
+        const RgbCubeEyeExtrinsicConfig rgb_cubeeye_extrinsic = bootstrap.processor_config.rgb_cubeeye_extrinsic;
         std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
                   << ", pointcloud_downsample=" << options.pointcloud_downsample
                   << ", depth_projection_downsample=" << options.depth_projection_downsample
-                  << ", rgb_projection=(" << rgb_cubeeye_offset.tx_m << ',' << rgb_cubeeye_offset.ty_m << ',' << rgb_cubeeye_offset.tz_m
-                  << ", rpy=" << rgb_cubeeye_offset.roll_deg << ',' << rgb_cubeeye_offset.pitch_deg << ',' << rgb_cubeeye_offset.yaw_deg
-                  << ", undistort=" << (rgb_cubeeye_offset.rgb_undistort_enabled ? "on" : "off") << ')';
+                  << ", rgb_projection=(" << rgb_cubeeye_extrinsic.tx_m << ',' << rgb_cubeeye_extrinsic.ty_m << ',' << rgb_cubeeye_extrinsic.tz_m
+                  << ", rpy=" << rgb_cubeeye_extrinsic.roll_deg << ',' << rgb_cubeeye_extrinsic.pitch_deg << ',' << rgb_cubeeye_extrinsic.yaw_deg
+                  << ')';
         if (options.cubeeye_camera_fps_set) {
             std::cerr << ", cubeeye_camera_fps=" << options.cubeeye_camera_fps;
         }
+    }
+    if (source_uses_color(options.source_profile)) {
+        const RgbIntrinsicConfig rgb_intrinsic = bootstrap.processor_config.rgb_intrinsic;
+        std::cerr << ", rgb_intrinsic=(" << rgb_intrinsic.width << 'x' << rgb_intrinsic.height
+                  << ", undistort=" << (rgb_intrinsic.undistort_enabled ? "on" : "off") << ')';
     }
     std::cerr << ")\n";
 

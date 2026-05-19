@@ -1,0 +1,14 @@
+{
+  "width": 2304,
+  "height": 1296,
+  "fx": 1220.0,
+  "fy": 1220.0,
+  "cx": 1152.0,
+  "cy": 648.0,
+  "undistort_enabled": false,
+  "dist_k1": -0.28,
+  "dist_k2": 0.08,
+  "dist_p1": 0.0,
+  "dist_p2": 0.0,
+  "dist_k3": -0.01
+}

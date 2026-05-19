@@ -36,7 +36,8 @@ struct AppOptions {
     std::string cubeeye_frames = "depth,amplitude";
     std::string roi_config_path;
     std::string pallet_roi_config_path;
-    std::string rgb_cubeeye_offset_config_path;
+    std::string rgb_intrinsic_config_path;
+    std::string rgb_cubeeye_extrinsic_config_path;
     std::string pointcloud_roi_config_path;
     std::string robot_calibration_config_path;
     int cubeeye_camera_fps = 0;
@@ -59,7 +60,8 @@ struct AppBootstrap {
     HttpApiServerConfig http_api_server_config;
     std::unique_ptr<catcheye::input::FrameSource> camera_source;
     int cubeeye_camera_fps = 0;
-    std::string rgb_cubeeye_offset_config_path;
+    std::string rgb_intrinsic_config_path;
+    std::string rgb_cubeeye_extrinsic_config_path;
     std::string pointcloud_roi_config_path;
     std::string robot_calibration_config_path;
 };

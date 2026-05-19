@@ -157,7 +157,8 @@ scripts/cmake.sh compile-db release-hailo
 - `--camera-pipeline <pipeline>`: Camera Module 3 GStreamer pipeline을 덮어쓴다.
 - `--roi <path>`: Person ROI config 경로를 지정한다.
 - `--pallet-roi <path>`: Pallet ROI config 경로를 지정한다.
-- `--rgb-cubeeye-offset <path>`: RGB-CubeEye offset config 경로를 지정한다. 기본값은 `config/rgb_cubeeye_offset.json`이다.
+- `--rgb-intrinsic <path>`: RGB intrinsic config 경로를 지정한다. 기본값은 `config/rgb_intrinsic.json`이다.
+- `--rgb-cubeeye-extrinsic <path>`: RGB-CubeEye extrinsic config 경로를 지정한다. 기본값은 `config/rgb_cubeeye_extrinsic.json`이다.
 - `--pointcloud-roi <path>`: PointCloud X/Y/Z ROI config 경로를 지정한다. 기본값은 `config/pointcloud_roi.json`이다.
 - `--robot-calibration <path>`: Robot calibration config 경로를 지정한다. 기본값은 `config/robot_calibration.json`이다.
 - `--cubeeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
@@ -200,9 +201,9 @@ Camera Module 3 + CubeEye depth projection:
 ./bin/catcheye-pick --viewer-only --ws --camera-input rgb-cubeeye --cubeeye-frames depth --depth-projection-downsample 4
 ```
 
-`camera`와 `depth`가 같이 들어오면 WebSocket viewer frame에 `projected_depth` stream이 추가된다. 이 stream은 CubeEye SDK `intrinsicParameters()`로 depth pixel을 3D로 복원한 뒤 `rgb_cubeeye_offset.json`의 R/T와 RGB intrinsic으로 RGB image plane에 투영한 `x_px, y_px, depth_m` float 배열이다. CubeEye intrinsic은 config로 받지 않는다. SDK intrinsic을 못 읽으면 `projected_depth`는 생성하지 않는다. RGB 이미지는 다시 JPEG로 만들지 않고 Studio가 현재 `camera` stream 위에 점을 그린다.
+`camera`와 `depth`가 같이 들어오면 WebSocket viewer frame에 `projected_depth` stream이 추가된다. 이 stream은 CubeEye SDK `intrinsicParameters()`로 depth pixel을 3D로 복원한 뒤 `rgb_intrinsic.json`과 `rgb_cubeeye_extrinsic.json`으로 RGB image plane에 투영한 `x_px, y_px, depth_m` float 배열이다. CubeEye intrinsic은 config로 받지 않는다. SDK intrinsic을 못 읽으면 `projected_depth`는 생성하지 않는다. RGB 이미지는 다시 JPEG로 만들지 않고 Studio가 현재 `camera` stream 위에 점을 그린다.
 
-`rgb_undistort_enabled`가 `true`면 Camera Module 3 stream은 `rgb_fx/fy/cx/cy`와 `rgb_dist_k1/k2/p1/p2/k3`로 왜곡 보정 후 송출된다. 기본 보정값은 `K=(1220,1220,1152,648)`, `dist=(-0.28,0.08,0,0,-0.01)`이다.
+`rgb_intrinsic.json`의 `undistort_enabled`가 `true`면 Camera Module 3 stream은 `fx/fy/cx/cy`와 `dist_k1/k2/p1/p2/k3`로 왜곡 보정 후 송출된다. 기본 보정값은 `K=(1220,1220,1152,648)`, `dist=(-0.28,0.08,0,0,-0.01)`이다.
 
 Camera Module 3 런타임 파라미터 조회:
 
@@ -225,6 +226,12 @@ curl -X PUT http://localhost:8090/api/rgb-camera/properties/exposure-time \
 RGB intrinsic 캘리브레이션:
 
 ```bash
+curl http://localhost:8090/api/rgb-camera/intrinsic
+
+curl -X PUT http://localhost:8090/api/rgb-camera/intrinsic \
+  -H 'Content-Type: application/json' \
+  -d '{"undistort_enabled":true}'
+
 curl -X DELETE http://localhost:8090/api/rgb-camera/intrinsic-calibration
 
 curl -X POST http://localhost:8090/api/rgb-camera/intrinsic-calibration/capture \
@@ -236,14 +243,14 @@ curl -X POST http://localhost:8090/api/rgb-camera/intrinsic-calibration/solve \
   -d '{"pattern_width":9,"pattern_height":6,"square_size_m":0.020}'
 ```
 
-`capture`는 최신 RGB frame에서 A4 intrinsic 보드 corner가 잡힌 경우만 누적한다. 최소 8장 이상 누적해야 `solve`가 동작한다. `solve`가 성공하면 `config/rgb_cubeeye_offset.json`의 `rgb_fx/fy/cx/cy`, `rgb_dist_*`, `rgb_width/height`를 저장하고 런타임 projection 설정에도 바로 반영한다.
+`capture`는 최신 RGB frame에서 A4 intrinsic 보드 corner가 잡힌 경우만 누적한다. 최소 8장 이상 누적해야 `solve`가 동작한다. `solve`가 성공하면 `config/rgb_intrinsic.json`의 `fx/fy/cx/cy`, `dist_*`, `width/height`를 저장하고 런타임 projection 설정에도 바로 반영한다.
 
-RGB↔CubeEye projection 조정:
+RGB↔CubeEye extrinsic 조정:
 
 ```bash
-curl -X PUT http://localhost:8090/api/rgb-cubeeye-offset \
+curl -X PUT http://localhost:8090/api/rgb-cubeeye/extrinsic \
   -H 'Content-Type: application/json' \
-  -d '{"tx_m":0.0,"ty_m":0.0,"tz_m":0.0,"roll_deg":0.0,"pitch_deg":0.0,"yaw_deg":0.0,"rgb_undistort_enabled":true}'
+  -d '{"tx_m":0.0,"ty_m":0.0,"tz_m":0.0,"roll_deg":0.0,"pitch_deg":0.0,"yaw_deg":0.0}'
 ```
 
 PointCloud ROI 조정:
@@ -318,8 +325,10 @@ Camera Module 3 pipeline 지정:
 - `PUT /api/roi`
 - `GET /api/pallet-roi`
 - `PUT /api/pallet-roi`
-- `GET /api/rgb-cubeeye-offset`
-- `PUT /api/rgb-cubeeye-offset` body: `{"tx_m": 0.00, "ty_m": 0.00, "tz_m": 0.00, "roll_deg": 0.00, "pitch_deg": 0.00, "yaw_deg": 0.00, "rgb_undistort_enabled": true}`
+- `GET /api/rgb-camera/intrinsic`
+- `PUT /api/rgb-camera/intrinsic` body: `{"undistort_enabled": true}`
+- `GET /api/rgb-cubeeye/extrinsic`
+- `PUT /api/rgb-cubeeye/extrinsic` body: `{"tx_m": 0.00, "ty_m": 0.00, "tz_m": 0.00, "roll_deg": 0.00, "pitch_deg": 0.00, "yaw_deg": 0.00}`
 - `GET /api/pointcloud-roi`
 - `PUT /api/pointcloud-roi`
 - `GET /api/robot-calibration`

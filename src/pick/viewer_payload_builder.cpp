@@ -228,17 +228,17 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
 
 } // namespace
 
-ViewerPayload camera_payload(const catcheye::input::Frame& frame, const RgbCubeEyeOffset& rgb_cubeeye_offset)
+ViewerPayload camera_payload(const catcheye::input::Frame& frame, const RgbIntrinsicConfig& rgb_intrinsic)
 {
     cv::Mat bgr = frame_to_bgr(frame);
     if (bgr.empty()) {
         throw std::runtime_error("failed to convert Camera Module 3 frame");
     }
-    if (rgb_cubeeye_offset.rgb_undistort_enabled) {
-        const cv::Mat camera_matrix = (cv::Mat_<double>(3, 3) << rgb_cubeeye_offset.rgb_fx, 0.0, rgb_cubeeye_offset.rgb_cx, 0.0,
-                                       rgb_cubeeye_offset.rgb_fy, rgb_cubeeye_offset.rgb_cy, 0.0, 0.0, 1.0);
-        const cv::Mat dist_coeffs = (cv::Mat_<double>(1, 5) << rgb_cubeeye_offset.rgb_dist_k1, rgb_cubeeye_offset.rgb_dist_k2,
-                                     rgb_cubeeye_offset.rgb_dist_p1, rgb_cubeeye_offset.rgb_dist_p2, rgb_cubeeye_offset.rgb_dist_k3);
+    if (rgb_intrinsic.undistort_enabled) {
+        const cv::Mat camera_matrix =
+            (cv::Mat_<double>(3, 3) << rgb_intrinsic.fx, 0.0, rgb_intrinsic.cx, 0.0, rgb_intrinsic.fy, rgb_intrinsic.cy, 0.0, 0.0, 1.0);
+        const cv::Mat dist_coeffs = (cv::Mat_<double>(1, 5) << rgb_intrinsic.dist_k1, rgb_intrinsic.dist_k2, rgb_intrinsic.dist_p1,
+                                     rgb_intrinsic.dist_p2, rgb_intrinsic.dist_k3);
         cv::Mat undistorted;
         cv::undistort(bgr, undistorted, camera_matrix, dist_coeffs, camera_matrix);
         bgr = std::move(undistorted);
@@ -260,7 +260,8 @@ std::optional<ViewerPayload> projected_depth_payload(
     const catcheye::input::Frame& camera_frame,
     const CubeEyeFrameEntry& depth_entry,
     const std::optional<CubeEyeIntrinsics>& cubeeye_intrinsics,
-    const RgbCubeEyeOffset& rgb_cubeeye_offset,
+    const RgbIntrinsicConfig& rgb_intrinsic,
+    const RgbCubeEyeExtrinsicConfig& rgb_cubeeye_extrinsic,
     int stride)
 {
     if (depth_entry.spec.type != meere::sensor::FrameType::Depth || stride <= 0) {
@@ -289,10 +290,10 @@ std::optional<ViewerPayload> projected_depth_payload(
 
     const auto* data = depth_values->data();
     const cv::Matx33f depth_to_rgb_rotation =
-        rotation_matrix(rgb_cubeeye_offset.roll_deg, rgb_cubeeye_offset.pitch_deg, rgb_cubeeye_offset.yaw_deg);
-    const cv::Vec3f depth_to_rgb_translation(rgb_cubeeye_offset.tx_m, rgb_cubeeye_offset.ty_m, rgb_cubeeye_offset.tz_m);
-    const float scale_x = static_cast<float>(camera_frame.width) / static_cast<float>(rgb_cubeeye_offset.rgb_width);
-    const float scale_y = static_cast<float>(camera_frame.height) / static_cast<float>(rgb_cubeeye_offset.rgb_height);
+        rotation_matrix(rgb_cubeeye_extrinsic.roll_deg, rgb_cubeeye_extrinsic.pitch_deg, rgb_cubeeye_extrinsic.yaw_deg);
+    const cv::Vec3f depth_to_rgb_translation(rgb_cubeeye_extrinsic.tx_m, rgb_cubeeye_extrinsic.ty_m, rgb_cubeeye_extrinsic.tz_m);
+    const float scale_x = static_cast<float>(camera_frame.width) / static_cast<float>(rgb_intrinsic.width);
+    const float scale_y = static_cast<float>(camera_frame.height) / static_cast<float>(rgb_intrinsic.height);
     const float depth_fx = cubeeye_intrinsics->fx;
     const float depth_fy = cubeeye_intrinsics->fy;
     const float depth_cx = cubeeye_intrinsics->cx;
@@ -318,8 +319,8 @@ std::optional<ViewerPayload> projected_depth_payload(
                 continue;
             }
 
-            const float rgb_xf = ((rgb_cubeeye_offset.rgb_fx * (camera_point[0] / camera_point[2])) + rgb_cubeeye_offset.rgb_cx) * scale_x;
-            const float rgb_yf = ((rgb_cubeeye_offset.rgb_fy * (camera_point[1] / camera_point[2])) + rgb_cubeeye_offset.rgb_cy) * scale_y;
+            const float rgb_xf = ((rgb_intrinsic.fx * (camera_point[0] / camera_point[2])) + rgb_intrinsic.cx) * scale_x;
+            const float rgb_yf = ((rgb_intrinsic.fy * (camera_point[1] / camera_point[2])) + rgb_intrinsic.cy) * scale_y;
             if (rgb_xf < 0.0F || rgb_xf >= static_cast<float>(camera_frame.width) || rgb_yf < 0.0F ||
                 rgb_yf >= static_cast<float>(camera_frame.height)) {
                 continue;

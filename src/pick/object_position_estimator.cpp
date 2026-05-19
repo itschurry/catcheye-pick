@@ -38,8 +38,7 @@ struct CubeEyeSampleWindow {
 std::optional<CubeEyeSampleWindow> map_detection_box(const catcheye::BoundingBox& box,
                                                      const catcheye::input::Frame& camera_frame,
                                                      int cubeeye_width,
-                                                     int cubeeye_height,
-                                                     RgbCubeEyeOffset rgb_cubeeye_offset)
+                                                     int cubeeye_height)
 {
     if (cubeeye_width <= 0 || cubeeye_height <= 0 || camera_frame.width <= 0 || camera_frame.height <= 0) {
         return std::nullopt;
@@ -47,16 +46,15 @@ std::optional<CubeEyeSampleWindow> map_detection_box(const catcheye::BoundingBox
 
     const float center_x = box.x + (box.width * 0.5F);
     const float center_y = box.y + (box.height * 0.5F);
-    const float cubeeye_u = std::clamp((center_x / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
-    const float cubeeye_v = std::clamp((center_y / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
+    const float cubeeye_u = std::clamp(center_x / static_cast<float>(camera_frame.width), 0.0F, 1.0F);
+    const float cubeeye_v = std::clamp(center_y / static_cast<float>(camera_frame.height), 0.0F, 1.0F);
     const int cubeeye_x = std::clamp(static_cast<int>(cubeeye_u * static_cast<float>(cubeeye_width)), 0, cubeeye_width - 1);
     const int cubeeye_y = std::clamp(static_cast<int>(cubeeye_v * static_cast<float>(cubeeye_height)), 0, cubeeye_height - 1);
 
-    const float left_u = std::clamp((box.x / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
-    const float top_v = std::clamp((box.y / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
-    const float right_u = std::clamp(((box.x + box.width) / static_cast<float>(camera_frame.width)) + rgb_cubeeye_offset.u, 0.0F, 1.0F);
-    const float bottom_v =
-        std::clamp(((box.y + box.height) / static_cast<float>(camera_frame.height)) + rgb_cubeeye_offset.v, 0.0F, 1.0F);
+    const float left_u = std::clamp(box.x / static_cast<float>(camera_frame.width), 0.0F, 1.0F);
+    const float top_v = std::clamp(box.y / static_cast<float>(camera_frame.height), 0.0F, 1.0F);
+    const float right_u = std::clamp((box.x + box.width) / static_cast<float>(camera_frame.width), 0.0F, 1.0F);
+    const float bottom_v = std::clamp((box.y + box.height) / static_cast<float>(camera_frame.height), 0.0F, 1.0F);
 
     return CubeEyeSampleWindow{
         .min_x = std::clamp(static_cast<int>(std::floor(std::min(left_u, right_u) * static_cast<float>(cubeeye_width))), 0, cubeeye_width - 1),
@@ -127,8 +125,7 @@ std::optional<PickDetectionResult::ObjectPosition> summarize_samples(std::vector
 
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from_pointcloud(const catcheye::BoundingBox& box,
                                                                                             const catcheye::input::Frame& camera_frame,
-                                                                                            const CubeEyeFrameEntry& pointcloud_entry,
-                                                                                            RgbCubeEyeOffset rgb_cubeeye_offset)
+                                                                                            const CubeEyeFrameEntry& pointcloud_entry)
 {
     const auto pointcloud = meere::sensor::frame_cast_pcl32f(pointcloud_entry.frame);
     if (!pointcloud || !pointcloud->frameDataX() || !pointcloud->frameDataY() || !pointcloud->frameDataZ()) {
@@ -137,7 +134,7 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from
 
     const int width = pointcloud->frameWidth();
     const int height = pointcloud->frameHeight();
-    const auto sample_window = map_detection_box(box, camera_frame, width, height, rgb_cubeeye_offset);
+    const auto sample_window = map_detection_box(box, camera_frame, width, height);
     if (!sample_window.has_value()) {
         return std::nullopt;
     }
@@ -178,8 +175,7 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from_depth(const catcheye::BoundingBox& box,
                                                                                        const catcheye::input::Frame& camera_frame,
                                                                                        const CubeEyeFrameEntry& depth_entry,
-                                                                                       const CubeEyeIntrinsics& intrinsics,
-                                                                                       RgbCubeEyeOffset rgb_cubeeye_offset)
+                                                                                       const CubeEyeIntrinsics& intrinsics)
 {
     if (intrinsics.fx <= 0.0F || intrinsics.fy <= 0.0F) {
         return std::nullopt;
@@ -192,7 +188,7 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from
 
     const int width = depth->frameWidth();
     const int height = depth->frameHeight();
-    const auto sample_window = map_detection_box(box, camera_frame, width, height, rgb_cubeeye_offset);
+    const auto sample_window = map_detection_box(box, camera_frame, width, height);
     if (!sample_window.has_value()) {
         return std::nullopt;
     }
@@ -231,14 +227,13 @@ std::optional<PickDetectionResult::ObjectPosition> estimate_object_position_from
 std::optional<PickDetectionResult::ObjectPosition> estimate_object_position(const catcheye::BoundingBox& box,
                                                                             const catcheye::input::Frame& camera_frame,
                                                                             const CubeEyeFrameEntry& cubeeye_entry,
-                                                                            const std::optional<CubeEyeIntrinsics>& cubeeye_intrinsics,
-                                                                            RgbCubeEyeOffset rgb_cubeeye_offset)
+                                                                            const std::optional<CubeEyeIntrinsics>& cubeeye_intrinsics)
 {
     if (cubeeye_entry.spec.type == meere::sensor::FrameType::PointCloud) {
-        return estimate_object_position_from_pointcloud(box, camera_frame, cubeeye_entry, rgb_cubeeye_offset);
+        return estimate_object_position_from_pointcloud(box, camera_frame, cubeeye_entry);
     }
     if (cubeeye_entry.spec.type == meere::sensor::FrameType::Depth && cubeeye_intrinsics.has_value()) {
-        return estimate_object_position_from_depth(box, camera_frame, cubeeye_entry, *cubeeye_intrinsics, rgb_cubeeye_offset);
+        return estimate_object_position_from_depth(box, camera_frame, cubeeye_entry, *cubeeye_intrinsics);
     }
     return std::nullopt;
 }

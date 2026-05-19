@@ -8,7 +8,7 @@
 #include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/roi/roi_validation.hpp"
 #include "pick/object_position_estimator.hpp"
-#include "pick/rgb_cubeeye_offset_repository.hpp"
+#include "pick/calibration_config_repository.hpp"
 #include "pick/viewer_payload_builder.hpp"
 
 namespace catcheye::pick {
@@ -155,10 +155,16 @@ bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfi
     return true;
 }
 
-RgbCubeEyeOffset PickProcessor::rgb_cubeeye_offset() const
+RgbIntrinsicConfig PickProcessor::rgb_intrinsic() const
 {
     std::lock_guard<std::mutex> lock(roi_mutex_);
-    return config_.rgb_cubeeye_offset;
+    return config_.rgb_intrinsic;
+}
+
+RgbCubeEyeExtrinsicConfig PickProcessor::rgb_cubeeye_extrinsic() const
+{
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    return config_.rgb_cubeeye_extrinsic;
 }
 
 PointCloudRoiConfig PickProcessor::pointcloud_roi_config() const
@@ -173,14 +179,25 @@ RobotCalibrationConfig PickProcessor::robot_calibration() const
     return config_.robot_calibration;
 }
 
-bool PickProcessor::update_rgb_cubeeye_offset(RgbCubeEyeOffset offset)
+bool PickProcessor::update_rgb_intrinsic(RgbIntrinsicConfig config)
 {
-    if (!is_valid_rgb_cubeeye_offset(offset)) {
+    if (!is_valid_rgb_intrinsic_config(config)) {
         return false;
     }
 
     std::lock_guard<std::mutex> lock(roi_mutex_);
-    config_.rgb_cubeeye_offset = offset;
+    config_.rgb_intrinsic = config;
+    return true;
+}
+
+bool PickProcessor::update_rgb_cubeeye_extrinsic(RgbCubeEyeExtrinsicConfig config)
+{
+    if (!is_valid_rgb_cubeeye_extrinsic_config(config)) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(roi_mutex_);
+    config_.rgb_cubeeye_extrinsic = config;
     return true;
 }
 
@@ -237,7 +254,6 @@ PickDetectionFrame PickProcessor::process_detection_frame(const RgbdFrame& frame
     const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(frame.depth);
     const CubeEyeFrameEntry* depth_frame = find_depth_frame(frame.depth);
     const CubeEyeFrameEntry* position_frame = pointcloud_frame != nullptr ? pointcloud_frame : depth_frame;
-    const RgbCubeEyeOffset rgb_cubeeye_offset = this->rgb_cubeeye_offset();
     const RobotCalibrationConfig robot_calibration = this->robot_calibration();
     output.detections.reserve(detections.size());
     output.pick_candidates.reserve(detections.size());
@@ -245,7 +261,7 @@ PickDetectionFrame PickProcessor::process_detection_frame(const RgbdFrame& frame
     for (const auto& detection : detections) {
         std::optional<PickDetectionResult::ObjectPosition> position;
         if (position_frame != nullptr) {
-            position = estimate_object_position(detection.box, color_frame, *position_frame, frame.depth.intrinsics, rgb_cubeeye_offset);
+            position = estimate_object_position(detection.box, color_frame, *position_frame, frame.depth.intrinsics);
         }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,
@@ -274,16 +290,17 @@ PickViewerFrame PickProcessor::process_viewer_frame(const RgbdFrame& frame, bool
     output.pallet_roi_enabled = pallet_roi.enabled;
     output.pallet_roi_config = pallet_roi.config;
     output.payloads.reserve(2U + frame.depth.frames.size());
-    const RgbCubeEyeOffset rgb_cubeeye_offset_snapshot = rgb_cubeeye_offset();
+    const RgbIntrinsicConfig rgb_intrinsic_snapshot = rgb_intrinsic();
+    const RgbCubeEyeExtrinsicConfig rgb_cubeeye_extrinsic_snapshot = rgb_cubeeye_extrinsic();
     if (include_color_payload && frame.color.has_value()) {
-        output.payloads.push_back(camera_payload(*frame.color, rgb_cubeeye_offset_snapshot));
+        output.payloads.push_back(camera_payload(*frame.color, rgb_intrinsic_snapshot));
     }
     const PointCloudRoiConfig pointcloud_roi = pointcloud_roi_config();
     for (const auto& depth_frame : frame.depth.frames) {
         if (frame.color.has_value()) {
             if (auto projected_depth =
-                    projected_depth_payload(*frame.color, depth_frame, frame.depth.intrinsics, rgb_cubeeye_offset_snapshot,
-                                            config_.depth_projection_downsample)) {
+                    projected_depth_payload(*frame.color, depth_frame, frame.depth.intrinsics, rgb_intrinsic_snapshot,
+                                            rgb_cubeeye_extrinsic_snapshot, config_.depth_projection_downsample)) {
                 output.payloads.push_back(std::move(*projected_depth));
             }
         }

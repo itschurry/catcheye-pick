@@ -27,7 +27,8 @@ class HttpApiServer final {
         HttpApiServerConfig config,
         std::string roi_config_path,
         std::string pallet_roi_config_path,
-        std::string rgb_cubeeye_offset_config_path,
+        std::string rgb_intrinsic_config_path,
+        std::string rgb_cubeeye_extrinsic_config_path,
         std::string pointcloud_roi_config_path,
         std::string robot_calibration_config_path,
         PickProcessor* processor,
@@ -43,12 +44,14 @@ class HttpApiServer final {
     catcheye::http::HttpResponse handle_put_cubeeye_property(const std::string& key, const std::string& body) const;
     catcheye::http::HttpResponse handle_get_rgb_camera_properties() const;
     catcheye::http::HttpResponse handle_put_rgb_camera_property(const std::string& key, const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_rgb_intrinsic() const;
+    catcheye::http::HttpResponse handle_put_rgb_intrinsic(const std::string& body) const;
     catcheye::http::HttpResponse handle_get_rgb_intrinsic_calibration() const;
     catcheye::http::HttpResponse handle_delete_rgb_intrinsic_calibration() const;
     catcheye::http::HttpResponse handle_post_rgb_intrinsic_capture(const std::string& body) const;
     catcheye::http::HttpResponse handle_post_rgb_intrinsic_solve(const std::string& body) const;
-    catcheye::http::HttpResponse handle_get_rgb_cubeeye_offset() const;
-    catcheye::http::HttpResponse handle_put_rgb_cubeeye_offset(const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_rgb_cubeeye_extrinsic() const;
+    catcheye::http::HttpResponse handle_put_rgb_cubeeye_extrinsic(const std::string& body) const;
     catcheye::http::HttpResponse handle_get_pointcloud_roi_config() const;
     catcheye::http::HttpResponse handle_put_pointcloud_roi_config(const std::string& body) const;
     catcheye::http::HttpResponse handle_get_robot_calibration() const;
@@ -57,7 +60,8 @@ class HttpApiServer final {
     HttpApiServerConfig config_;
     std::string roi_config_path_;
     std::string pallet_roi_config_path_;
-    std::string rgb_cubeeye_offset_config_path_;
+    std::string rgb_intrinsic_config_path_;
+    std::string rgb_cubeeye_extrinsic_config_path_;
     std::string pointcloud_roi_config_path_;
     std::string robot_calibration_config_path_;
     PickProcessor* processor_ = nullptr;
