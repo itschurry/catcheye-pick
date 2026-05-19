@@ -18,7 +18,25 @@ struct CubeEyeFrameSpec {
 
 struct RgbCubeEyeOffset {
     float u = 0.0F;
-    float v = 0.40F;
+    float v = 0.0F;
+    float tx_m = 0.0F;
+    float ty_m = 0.0F;
+    float tz_m = 0.0F;
+    float roll_deg = 0.0F;
+    float pitch_deg = 0.0F;
+    float yaw_deg = 0.0F;
+    int rgb_width = 2304;
+    int rgb_height = 1296;
+    float rgb_fx = 1220.0F;
+    float rgb_fy = 1220.0F;
+    float rgb_cx = 1152.0F;
+    float rgb_cy = 648.0F;
+    bool rgb_undistort_enabled = false;
+    float rgb_dist_k1 = -0.28F;
+    float rgb_dist_k2 = 0.08F;
+    float rgb_dist_p1 = 0.0F;
+    float rgb_dist_p2 = 0.0F;
+    float rgb_dist_k3 = -0.01F;
 };
 
 struct PointCloudRoiConfig {
@@ -49,6 +67,7 @@ struct PickProcessorConfig {
     catcheye::DetectorFactoryConfig detector;
     std::vector<CubeEyeFrameSpec> cubeeye_frames;
     int pointcloud_downsample = 4;
+    int depth_projection_downsample = 4;
     std::string rgb_cubeeye_offset_config_path;
     RgbCubeEyeOffset rgb_cubeeye_offset;
     bool roi_enabled = false;

@@ -4,12 +4,14 @@
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "catcheye/http/roi_api.hpp"
+#include "catcheye/input/rgb_intrinsic_calibrator.hpp"
 #include "pick/config_json.hpp"
 #include "pick/cubeeye_camera.hpp"
 #include "pick/pointcloud_roi_repository.hpp"
@@ -25,12 +27,46 @@ struct JsonValue {
         Boolean,
         Integer,
         Float,
+        String,
     };
 
     Type type = Type::Integer;
     bool bool_value = false;
     int int_value = 0;
     float float_value = 0.0F;
+    std::string string_value;
+};
+
+enum class RuntimePropertyType {
+    Boolean,
+    Integer,
+    Float,
+    Enum,
+};
+
+struct RuntimePropertySpec {
+    std::string_view key;
+    RuntimePropertyType type;
+};
+
+constexpr RuntimePropertySpec RGB_CAMERA_PROPERTIES[] = {
+    {"ae-enable", RuntimePropertyType::Boolean},
+    {"ae-metering-mode", RuntimePropertyType::Enum},
+    {"ae-flicker-period", RuntimePropertyType::Integer},
+    {"exposure-time-mode", RuntimePropertyType::Enum},
+    {"exposure-time", RuntimePropertyType::Integer},
+    {"exposure-value", RuntimePropertyType::Float},
+    {"analogue-gain-mode", RuntimePropertyType::Enum},
+    {"analogue-gain", RuntimePropertyType::Float},
+    {"awb-enable", RuntimePropertyType::Boolean},
+    {"awb-mode", RuntimePropertyType::Enum},
+    {"af-mode", RuntimePropertyType::Enum},
+    {"lens-position", RuntimePropertyType::Float},
+    {"brightness", RuntimePropertyType::Float},
+    {"contrast", RuntimePropertyType::Float},
+    {"saturation", RuntimePropertyType::Float},
+    {"sharpness", RuntimePropertyType::Float},
+    {"gamma", RuntimePropertyType::Float},
 };
 
 std::string trim(std::string value)
@@ -69,6 +105,16 @@ bool is_float_cubeeye_property(std::string_view key)
            key == "depth_time_spatial_threshold" || key == "depth_time_temporal_threshold";
 }
 
+std::optional<RuntimePropertySpec> find_rgb_camera_property(std::string_view key)
+{
+    for (const auto& spec : RGB_CAMERA_PROPERTIES) {
+        if (spec.key == key) {
+            return spec;
+        }
+    }
+    return std::nullopt;
+}
+
 bool valid_int_value(std::string_view key, int value)
 {
     if (key == "framerate") {
@@ -99,6 +145,11 @@ bool parse_value_body(std::string_view body, JsonValue& output)
     if (value_text == "true" || value_text == "false") {
         output.type = JsonValue::Type::Boolean;
         output.bool_value = value_text == "true";
+        return true;
+    }
+    if (value_text.size() >= 2U && value_text.front() == '"' && value_text.back() == '"') {
+        output.type = JsonValue::Type::String;
+        output.string_value = value_text.substr(1U, value_text.size() - 2U);
         return true;
     }
 
@@ -151,6 +202,60 @@ bool parse_float_field(std::string_view body, std::string_view key, float& outpu
     }
 }
 
+bool parse_bool_field(std::string_view body, std::string_view key, bool& output)
+{
+    const std::string quoted_key = "\"" + std::string(key) + "\"";
+    const std::size_t key_pos = body.find(quoted_key);
+    if (key_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t colon_pos = body.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t end_pos = body.find_first_of(",}", colon_pos + 1U);
+    const std::string value_text = trim(std::string(body.substr(
+        colon_pos + 1U,
+        end_pos == std::string_view::npos ? std::string_view::npos : end_pos - colon_pos - 1U)));
+    if (value_text == "true") {
+        output = true;
+        return true;
+    }
+    if (value_text == "false") {
+        output = false;
+        return true;
+    }
+    return false;
+}
+
+bool parse_int_field(std::string_view body, std::string_view key, int& output)
+{
+    float value = 0.0F;
+    if (!parse_float_field(body, key, value)) {
+        return false;
+    }
+    const int integer = static_cast<int>(value);
+    if (static_cast<float>(integer) != value) {
+        return false;
+    }
+    output = integer;
+    return true;
+}
+
+std::optional<catcheye::input::RgbIntrinsicCalibrationBoard> parse_rgb_intrinsic_board(std::string_view body)
+{
+    catcheye::input::RgbIntrinsicCalibrationBoard board;
+    if (!parse_int_field(body, "pattern_width", board.pattern_width) ||
+        !parse_int_field(body, "pattern_height", board.pattern_height) ||
+        !parse_float_field(body, "square_size_m", board.square_size_m)) {
+        return std::nullopt;
+    }
+    if (board.pattern_width <= 0 || board.pattern_height <= 0 || board.square_size_m <= 0.0F) {
+        return std::nullopt;
+    }
+    return board;
+}
+
 } // namespace
 
 HttpApiServer::HttpApiServer(
@@ -161,6 +266,7 @@ HttpApiServer::HttpApiServer(
     std::string pointcloud_roi_config_path,
     std::string robot_calibration_config_path,
     PickProcessor* processor,
+    catcheye::input::FrameSource* camera_source,
     CubeEyeCameraSession* cubeeye)
     : config_(std::move(config)),
       roi_config_path_(std::move(roi_config_path)),
@@ -169,6 +275,7 @@ HttpApiServer::HttpApiServer(
       pointcloud_roi_config_path_(std::move(pointcloud_roi_config_path)),
       robot_calibration_config_path_(std::move(robot_calibration_config_path)),
       processor_(processor),
+      camera_source_(camera_source),
       cubeeye_(cubeeye)
 {}
 
@@ -205,6 +312,47 @@ bool HttpApiServer::start()
     server_->add_route("/api/cubeeye/properties", [this](const catcheye::http::HttpRequest& request) {
         if (request.method == "GET") {
             return handle_get_cubeeye_properties();
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/rgb-camera/properties", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return handle_get_rgb_camera_properties();
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/rgb-camera/intrinsic-calibration", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return handle_get_rgb_intrinsic_calibration();
+        }
+        if (request.method == "DELETE") {
+            return handle_delete_rgb_intrinsic_calibration();
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/rgb-camera/intrinsic-calibration/capture", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "POST") {
+            return handle_post_rgb_intrinsic_capture(request.body);
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/rgb-camera/intrinsic-calibration/solve", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "POST") {
+            return handle_post_rgb_intrinsic_solve(request.body);
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    constexpr std::string_view rgb_camera_property_prefix = "/api/rgb-camera/properties/";
+    constexpr std::size_t rgb_camera_property_prefix_size = rgb_camera_property_prefix.size();
+    server_->add_prefix_route(std::string(rgb_camera_property_prefix), [this, rgb_camera_property_prefix_size](const catcheye::http::HttpRequest& request) {
+        const std::string key = request.path.substr(rgb_camera_property_prefix_size);
+        if (request.method == "PUT") {
+            return handle_put_rgb_camera_property(key, request.body);
         }
         return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
     });
@@ -262,6 +410,201 @@ void HttpApiServer::stop()
     if (server_ != nullptr) {
         server_->stop();
         server_.reset();
+    }
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_camera_properties() const
+{
+    if (camera_source_ == nullptr) {
+        return {409, "Conflict", catcheye::http::json_error_body("RGB camera is not enabled")};
+    }
+
+    std::ostringstream oss;
+    oss << "{";
+    bool first = true;
+    for (const auto& spec : RGB_CAMERA_PROPERTIES) {
+        const auto value = camera_source_->property_json(spec.key);
+        if (!value.has_value()) {
+            continue;
+        }
+        if (!first) {
+            oss << ',';
+        }
+        first = false;
+        oss << '"' << spec.key << "\":" << *value;
+    }
+    oss << "}";
+    return {200, "OK", oss.str()};
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_camera_property(const std::string& key, const std::string& body) const
+{
+    if (camera_source_ == nullptr) {
+        return {409, "Conflict", catcheye::http::json_error_body("RGB camera is not enabled")};
+    }
+    const auto spec = find_rgb_camera_property(key);
+    if (!spec.has_value()) {
+        return {400, "Bad Request", catcheye::http::json_error_body("unsupported RGB camera property")};
+    }
+
+    JsonValue value;
+    if (!parse_value_body(body, value)) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid property JSON body")};
+    }
+
+    bool updated = false;
+    switch (spec->type) {
+        case RuntimePropertyType::Boolean:
+            if (value.type != JsonValue::Type::Boolean) {
+                return {400, "Bad Request", catcheye::http::json_error_body("property value must be boolean")};
+            }
+            updated = camera_source_->set_bool_property(key, value.bool_value);
+            break;
+        case RuntimePropertyType::Integer:
+            if (value.type != JsonValue::Type::Integer) {
+                return {400, "Bad Request", catcheye::http::json_error_body("property value must be integer")};
+            }
+            updated = camera_source_->set_int_property(key, value.int_value);
+            break;
+        case RuntimePropertyType::Float:
+            if (value.type != JsonValue::Type::Float && value.type != JsonValue::Type::Integer) {
+                return {400, "Bad Request", catcheye::http::json_error_body("property value must be number")};
+            }
+            updated = camera_source_->set_float_property(
+                key,
+                value.type == JsonValue::Type::Float ? value.float_value : static_cast<float>(value.int_value));
+            break;
+        case RuntimePropertyType::Enum:
+            if (value.type != JsonValue::Type::String) {
+                return {400, "Bad Request", catcheye::http::json_error_body("property value must be string")};
+            }
+            updated = camera_source_->set_string_property(key, value.string_value);
+            break;
+    }
+
+    if (!updated) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body("failed to set RGB camera property")};
+    }
+    return handle_get_rgb_camera_properties();
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_intrinsic_calibration() const
+{
+    try {
+        const RgbCubeEyeOffset offset = load_rgb_cubeeye_offset_config(rgb_cubeeye_offset_config_path_);
+        std::lock_guard<std::mutex> lock(rgb_intrinsic_mutex_);
+        const int capture_count = rgb_intrinsic_calibrator_ ? rgb_intrinsic_calibrator_->capture_count() : 0;
+        std::ostringstream oss;
+        oss << "{"
+            << "\"capture_count\":" << capture_count << ','
+            << "\"rgb_width\":" << offset.rgb_width << ','
+            << "\"rgb_height\":" << offset.rgb_height << ','
+            << "\"rgb_fx\":" << offset.rgb_fx << ','
+            << "\"rgb_fy\":" << offset.rgb_fy << ','
+            << "\"rgb_cx\":" << offset.rgb_cx << ','
+            << "\"rgb_cy\":" << offset.rgb_cy << ','
+            << "\"rgb_dist_k1\":" << offset.rgb_dist_k1 << ','
+            << "\"rgb_dist_k2\":" << offset.rgb_dist_k2 << ','
+            << "\"rgb_dist_p1\":" << offset.rgb_dist_p1 << ','
+            << "\"rgb_dist_p2\":" << offset.rgb_dist_p2 << ','
+            << "\"rgb_dist_k3\":" << offset.rgb_dist_k3
+            << "}";
+        return {200, "OK", oss.str()};
+    } catch (const std::exception& e) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
+    }
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_delete_rgb_intrinsic_calibration() const
+{
+    std::lock_guard<std::mutex> lock(rgb_intrinsic_mutex_);
+    rgb_intrinsic_calibrator_.reset();
+    return {200, "OK", "{\"capture_count\":0}"};
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_post_rgb_intrinsic_capture(const std::string& body) const
+{
+    if (processor_ == nullptr) {
+        return {409, "Conflict", catcheye::http::json_error_body("processor is not enabled")};
+    }
+    const auto board = parse_rgb_intrinsic_board(body);
+    if (!board.has_value()) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB intrinsic board JSON body")};
+    }
+    const auto frame = processor_->latest_rgb_frame();
+    if (!frame.has_value()) {
+        return {409, "Conflict", catcheye::http::json_error_body("RGB frame is not available")};
+    }
+
+    try {
+        std::lock_guard<std::mutex> lock(rgb_intrinsic_mutex_);
+        if (!rgb_intrinsic_calibrator_) {
+            rgb_intrinsic_calibrator_ = std::make_unique<catcheye::input::RgbIntrinsicCalibrator>(*board);
+        }
+        const bool captured = rgb_intrinsic_calibrator_->add_frame(*frame);
+        std::ostringstream oss;
+        oss << "{"
+            << "\"captured\":" << (captured ? "true" : "false") << ','
+            << "\"capture_count\":" << rgb_intrinsic_calibrator_->capture_count()
+            << "}";
+        return {200, "OK", oss.str()};
+    } catch (const std::exception& e) {
+        return {400, "Bad Request", catcheye::http::json_error_body(e.what())};
+    }
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_post_rgb_intrinsic_solve(const std::string& body) const
+{
+    const auto board = parse_rgb_intrinsic_board(body);
+    if (!board.has_value()) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB intrinsic board JSON body")};
+    }
+
+    try {
+        std::lock_guard<std::mutex> lock(rgb_intrinsic_mutex_);
+        if (!rgb_intrinsic_calibrator_) {
+            return {409, "Conflict", catcheye::http::json_error_body("RGB intrinsic captures are empty")};
+        }
+        const auto result = rgb_intrinsic_calibrator_->calibrate();
+        RgbCubeEyeOffset offset = load_rgb_cubeeye_offset_config(rgb_cubeeye_offset_config_path_);
+        offset.rgb_width = result.image_width;
+        offset.rgb_height = result.image_height;
+        offset.rgb_fx = static_cast<float>(result.fx);
+        offset.rgb_fy = static_cast<float>(result.fy);
+        offset.rgb_cx = static_cast<float>(result.cx);
+        offset.rgb_cy = static_cast<float>(result.cy);
+        offset.rgb_dist_k1 = static_cast<float>(result.dist_k1);
+        offset.rgb_dist_k2 = static_cast<float>(result.dist_k2);
+        offset.rgb_dist_p1 = static_cast<float>(result.dist_p1);
+        offset.rgb_dist_p2 = static_cast<float>(result.dist_p2);
+        offset.rgb_dist_k3 = static_cast<float>(result.dist_k3);
+        if (!is_valid_rgb_cubeeye_offset(offset)) {
+            return {400, "Bad Request", catcheye::http::json_error_body("calibrated RGB intrinsic is out of range")};
+        }
+        if (!save_rgb_cubeeye_offset_config(offset, rgb_cubeeye_offset_config_path_)) {
+            return {500, "Internal Server Error", catcheye::http::json_error_body("failed to save RGB intrinsic config file")};
+        }
+        processor_->update_rgb_cubeeye_offset(offset);
+
+        std::ostringstream oss;
+        oss << "{"
+            << "\"capture_count\":" << rgb_intrinsic_calibrator_->capture_count() << ','
+            << "\"rms_error\":" << result.rms_error << ','
+            << "\"rgb_width\":" << offset.rgb_width << ','
+            << "\"rgb_height\":" << offset.rgb_height << ','
+            << "\"rgb_fx\":" << offset.rgb_fx << ','
+            << "\"rgb_fy\":" << offset.rgb_fy << ','
+            << "\"rgb_cx\":" << offset.rgb_cx << ','
+            << "\"rgb_cy\":" << offset.rgb_cy << ','
+            << "\"rgb_dist_k1\":" << offset.rgb_dist_k1 << ','
+            << "\"rgb_dist_k2\":" << offset.rgb_dist_k2 << ','
+            << "\"rgb_dist_p1\":" << offset.rgb_dist_p1 << ','
+            << "\"rgb_dist_p2\":" << offset.rgb_dist_p2 << ','
+            << "\"rgb_dist_k3\":" << offset.rgb_dist_k3
+            << "}";
+        return {200, "OK", oss.str()};
+    } catch (const std::exception& e) {
+        return {400, "Bad Request", catcheye::http::json_error_body(e.what())};
     }
 }
 
@@ -334,8 +677,40 @@ catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_cubeeye_offset() cons
 catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_offset(const std::string& body) const
 {
     RgbCubeEyeOffset offset;
-    if (!parse_float_field(body, "u", offset.u) || !parse_float_field(body, "v", offset.v)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye offset JSON body")};
+    try {
+        offset = load_rgb_cubeeye_offset_config(rgb_cubeeye_offset_config_path_);
+    } catch (const std::exception& e) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
+    }
+    bool has_field = false;
+    has_field = parse_float_field(body, "tx_m", offset.tx_m) || has_field;
+    has_field = parse_float_field(body, "ty_m", offset.ty_m) || has_field;
+    has_field = parse_float_field(body, "tz_m", offset.tz_m) || has_field;
+    has_field = parse_float_field(body, "roll_deg", offset.roll_deg) || has_field;
+    has_field = parse_float_field(body, "pitch_deg", offset.pitch_deg) || has_field;
+    has_field = parse_float_field(body, "yaw_deg", offset.yaw_deg) || has_field;
+    float rgb_width = static_cast<float>(offset.rgb_width);
+    float rgb_height = static_cast<float>(offset.rgb_height);
+    if (parse_float_field(body, "rgb_width", rgb_width)) {
+        offset.rgb_width = static_cast<int>(rgb_width);
+        has_field = true;
+    }
+    if (parse_float_field(body, "rgb_height", rgb_height)) {
+        offset.rgb_height = static_cast<int>(rgb_height);
+        has_field = true;
+    }
+    has_field = parse_float_field(body, "rgb_fx", offset.rgb_fx) || has_field;
+    has_field = parse_float_field(body, "rgb_fy", offset.rgb_fy) || has_field;
+    has_field = parse_float_field(body, "rgb_cx", offset.rgb_cx) || has_field;
+    has_field = parse_float_field(body, "rgb_cy", offset.rgb_cy) || has_field;
+    has_field = parse_bool_field(body, "rgb_undistort_enabled", offset.rgb_undistort_enabled) || has_field;
+    has_field = parse_float_field(body, "rgb_dist_k1", offset.rgb_dist_k1) || has_field;
+    has_field = parse_float_field(body, "rgb_dist_k2", offset.rgb_dist_k2) || has_field;
+    has_field = parse_float_field(body, "rgb_dist_p1", offset.rgb_dist_p1) || has_field;
+    has_field = parse_float_field(body, "rgb_dist_p2", offset.rgb_dist_p2) || has_field;
+    has_field = parse_float_field(body, "rgb_dist_k3", offset.rgb_dist_k3) || has_field;
+    if (!has_field) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye projection JSON body")};
     }
     if (!is_valid_rgb_cubeeye_offset(offset)) {
         return {400, "Bad Request", catcheye::http::json_error_body("RGB CubeEye offset out of range")};

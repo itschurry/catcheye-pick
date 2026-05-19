@@ -100,7 +100,8 @@ class PickProcessor final {
 
     bool initialize();
     PickDetectionFrame process_detection_frame(const RgbdFrame& frame);
-    PickViewerFrame process_viewer_frame(const RgbdFrame& frame) const;
+    PickViewerFrame process_viewer_frame(const RgbdFrame& frame, bool include_color_payload = true) const;
+    std::optional<catcheye::input::Frame> latest_rgb_frame() const;
     RgbCubeEyeOffset rgb_cubeeye_offset() const;
     PointCloudRoiConfig pointcloud_roi_config() const;
     RobotCalibrationConfig robot_calibration() const;
@@ -118,8 +119,11 @@ class PickProcessor final {
 
     RoiSnapshot roi_snapshot() const;
     RoiSnapshot pallet_roi_snapshot() const;
+    void record_latest_rgb_frame(const RgbdFrame& frame) const;
 
     mutable std::mutex roi_mutex_;
+    mutable std::mutex latest_rgb_mutex_;
+    mutable std::optional<catcheye::input::Frame> latest_rgb_frame_;
     PickProcessorConfig config_;
     std::unique_ptr<catcheye::IDetector> detector_;
 };

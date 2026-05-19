@@ -62,6 +62,7 @@ void print_usage() {
               << "  --robot-calibration <path>  Robot calibration config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"
               << "  --cubeeye-camera-fps <fps>  CubeEye S111D camera framerate: 7 | 15 | 30\n"
+              << "  --depth-projection-downsample <stride>  Depth-to-RGB projection sample stride (default: 4)\n"
               << "  --pointcloud-downsample <stride>  PointCloud downsample stride (default: 4)\n";
 }
 
@@ -378,6 +379,21 @@ public:
         }
     }
 
+    FrameSnapshot latest()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [&] {
+            return latest_.has_value() || error_ || stopping_;
+        });
+        if (error_) {
+            std::rethrow_exception(error_);
+        }
+        if (!latest_) {
+            throw std::runtime_error("RGB frame reader stopped before receiving frames");
+        }
+        return *latest_;
+    }
+
     FrameSnapshot latest_after(std::uint64_t last_sequence)
     {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -489,6 +505,7 @@ int run_viewer_only(AppBootstrap bootstrap) {
         http_pointcloud_roi_config_path,
         http_robot_calibration_config_path,
         &processor,
+        bootstrap.camera_source.get(),
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
         throw std::runtime_error("failed to start HTTP API server");
@@ -504,6 +521,8 @@ int run_viewer_only(AppBootstrap bootstrap) {
     std::atomic_uint64_t frame_index{0};
     std::mutex worker_error_mutex;
     std::exception_ptr worker_error;
+    std::mutex latest_rgb_mutex;
+    std::optional<catcheye::input::Frame> latest_rgb_frame;
     auto capture_worker_error = [&] {
         {
             std::lock_guard<std::mutex> lock(worker_error_mutex);
@@ -527,6 +546,10 @@ int run_viewer_only(AppBootstrap bootstrap) {
                     if (read_status == catcheye::input::FrameReadStatus::EndOfStream) {
                         throw std::runtime_error("Camera Module 3 stream ended");
                     }
+                    {
+                        std::lock_guard<std::mutex> lock(latest_rgb_mutex);
+                        latest_rgb_frame = frame;
+                    }
 
                     PickViewerFrame viewer_frame = processor.process_viewer_frame(RgbdFrame{
                         .frame_index = ++frame_index,
@@ -547,11 +570,16 @@ int run_viewer_only(AppBootstrap bootstrap) {
             try {
                 while (running) {
                     CubeEyeFrameSet cubeeye_frames = cubeeye->read();
+                    std::optional<catcheye::input::Frame> rgb_snapshot;
+                    if (rgb_camera_enabled) {
+                        std::lock_guard<std::mutex> lock(latest_rgb_mutex);
+                        rgb_snapshot = latest_rgb_frame;
+                    }
                     PickViewerFrame viewer_frame = processor.process_viewer_frame(RgbdFrame{
                         .frame_index = ++frame_index,
-                        .color = std::nullopt,
+                        .color = std::move(rgb_snapshot),
                         .depth = std::move(cubeeye_frames),
-                    });
+                    }, false);
                     async_publisher.publish("cubeeye", std::move(viewer_frame));
                 }
             } catch (...) {
@@ -634,6 +662,7 @@ int run_pick_detection(AppBootstrap bootstrap)
         http_pointcloud_roi_config_path,
         http_robot_calibration_config_path,
         &processor,
+        bootstrap.camera_source.get(),
         cubeeye ? &*cubeeye : nullptr);
     if (!http_api_server.start()) {
         throw std::runtime_error("failed to start HTTP API server");
@@ -672,11 +701,12 @@ int run_pick_detection(AppBootstrap bootstrap)
                 std::uint64_t published_cubeeye_sequence = 0;
                 while (running) {
                     CubeEyeFrameSet cubeeye_frames = cubeeye_reader->latest_after(published_cubeeye_sequence);
+                    LatestRgbFrameReader::FrameSnapshot rgb_snapshot = rgb_reader.latest();
                     PickViewerFrame cubeeye_viewer_frame = processor.process_viewer_frame(RgbdFrame{
                         .frame_index = cubeeye_frames.sequence,
-                        .color = std::nullopt,
+                        .color = std::optional<catcheye::input::Frame>{std::move(rgb_snapshot.frame)},
                         .depth = cubeeye_frames,
-                    });
+                    }, false);
                     std::optional<PickDetectionFrame> detection_snapshot;
                     {
                         std::lock_guard<std::mutex> lock(latest_detection_mutex);
@@ -844,6 +874,11 @@ AppOptions parse_app_options(int argc, char** argv) {
                 throw std::invalid_argument("--pointcloud-downsample requires a value");
             }
             options.pointcloud_downsample = std::stoi(argv[++i]);
+        } else if (arg == "--depth-projection-downsample") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--depth-projection-downsample requires a value");
+            }
+            options.depth_projection_downsample = std::stoi(argv[++i]);
         } else if (arg == "--rgb-cubeeye-offset-u") {
             throw std::invalid_argument("--rgb-cubeeye-offset-u was removed; use --rgb-cubeeye-offset or PUT /api/rgb-cubeeye-offset");
         } else if (arg == "--rgb-cubeeye-offset-v") {
@@ -889,6 +924,9 @@ AppOptions parse_app_options(int argc, char** argv) {
     }
     if (options.pointcloud_downsample <= 0) {
         throw std::invalid_argument("--pointcloud-downsample must be a positive integer");
+    }
+    if (options.depth_projection_downsample <= 0) {
+        throw std::invalid_argument("--depth-projection-downsample must be a positive integer");
     }
     if (options.num_threads <= 0) {
         throw std::invalid_argument("--num-threads must be a positive integer");
@@ -950,6 +988,7 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
         : options.metadata_path;
     hailo_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
     bootstrap.processor_config.pointcloud_downsample = options.pointcloud_downsample;
+    bootstrap.processor_config.depth_projection_downsample = options.depth_projection_downsample;
     bootstrap.rgb_cubeeye_offset_config_path = options.rgb_cubeeye_offset_config_path.empty()
         ? resolve_default_config_path(executable_path, "rgb_cubeeye_offset.json")
         : options.rgb_cubeeye_offset_config_path;
@@ -1033,7 +1072,10 @@ int run_app(int argc, char** argv) {
         const RgbCubeEyeOffset rgb_cubeeye_offset = bootstrap.processor_config.rgb_cubeeye_offset;
         std::cerr << ", cubeeye_frames='" << options.cubeeye_frames << "'"
                   << ", pointcloud_downsample=" << options.pointcloud_downsample
-                  << ", rgb_cubeeye_offset=(" << rgb_cubeeye_offset.u << ',' << rgb_cubeeye_offset.v << ')';
+                  << ", depth_projection_downsample=" << options.depth_projection_downsample
+                  << ", rgb_projection=(" << rgb_cubeeye_offset.tx_m << ',' << rgb_cubeeye_offset.ty_m << ',' << rgb_cubeeye_offset.tz_m
+                  << ", rpy=" << rgb_cubeeye_offset.roll_deg << ',' << rgb_cubeeye_offset.pitch_deg << ',' << rgb_cubeeye_offset.yaw_deg
+                  << ", undistort=" << (rgb_cubeeye_offset.rgb_undistort_enabled ? "on" : "off") << ')';
         if (options.cubeeye_camera_fps_set) {
             std::cerr << ", cubeeye_camera_fps=" << options.cubeeye_camera_fps;
         }

@@ -1,9 +1,15 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "catcheye/http/http_server.hpp"
+#include "catcheye/input/frame_source.hpp"
+
+namespace catcheye::input {
+class RgbIntrinsicCalibrator;
+}
 
 namespace catcheye::pick {
 
@@ -25,6 +31,7 @@ class HttpApiServer final {
         std::string pointcloud_roi_config_path,
         std::string robot_calibration_config_path,
         PickProcessor* processor,
+        catcheye::input::FrameSource* camera_source,
         CubeEyeCameraSession* cubeeye);
     ~HttpApiServer();
 
@@ -34,6 +41,12 @@ class HttpApiServer final {
   private:
     catcheye::http::HttpResponse handle_get_cubeeye_properties() const;
     catcheye::http::HttpResponse handle_put_cubeeye_property(const std::string& key, const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_rgb_camera_properties() const;
+    catcheye::http::HttpResponse handle_put_rgb_camera_property(const std::string& key, const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_rgb_intrinsic_calibration() const;
+    catcheye::http::HttpResponse handle_delete_rgb_intrinsic_calibration() const;
+    catcheye::http::HttpResponse handle_post_rgb_intrinsic_capture(const std::string& body) const;
+    catcheye::http::HttpResponse handle_post_rgb_intrinsic_solve(const std::string& body) const;
     catcheye::http::HttpResponse handle_get_rgb_cubeeye_offset() const;
     catcheye::http::HttpResponse handle_put_rgb_cubeeye_offset(const std::string& body) const;
     catcheye::http::HttpResponse handle_get_pointcloud_roi_config() const;
@@ -48,7 +61,10 @@ class HttpApiServer final {
     std::string pointcloud_roi_config_path_;
     std::string robot_calibration_config_path_;
     PickProcessor* processor_ = nullptr;
+    catcheye::input::FrameSource* camera_source_ = nullptr;
     CubeEyeCameraSession* cubeeye_ = nullptr;
+    mutable std::mutex rgb_intrinsic_mutex_;
+    mutable std::unique_ptr<catcheye::input::RgbIntrinsicCalibrator> rgb_intrinsic_calibrator_;
     std::unique_ptr<catcheye::http::HttpServer> server_;
 };
 

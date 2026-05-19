@@ -11,14 +11,17 @@ Raspberry Pi ARM64 환경을 대상으로 빌드하고 배포하는 picking 애�
 - RGB-D source profile 선택: `rgb-cubeeye`, `rgb`, `cubeeye`
 - WebSocket 송출
 - viewer-only에서 Camera Module 3와 CubeEye stream 독립 송출
+- viewer-only에서 CubeEye depth를 RGB plane에 투영한 `projected_depth` stream 송출
 - viewer-only 모드에서 딥러닝 검출 비활성화
 - NCNN/Hailo detector 선택
 - CubeEye frame 선택 옵션
 - Guard와 동일한 ROI HTTP API
 - RGB-CubeEye offset HTTP API
+- RGB intrinsic calibration HTTP API
 - PointCloud ROI HTTP API
 - Robot calibration HTTP API
 - CubeEye S111D property HTTP API
+- Camera Module 3 runtime property HTTP API
 
 ## 기본 포트
 
@@ -73,6 +76,17 @@ cd /opt/catcheye-pick
 
 `--camera-input`은 카메라 장비 이름이 아니라 source profile 선택값이다.
 새 카메라 구현은 processor에 직접 붙이지 말고 RGB-D frame 경계에 맞춰 추가한다.
+
+## 캘리브레이션 보드
+
+인쇄용 보드는 `docs/calibration_boards/`에 있다.
+
+| 파일 | 용도 | 용지 | OpenCV patternSize | squareSize |
+| --- | --- | --- | --- | --- |
+| `rgb_intrinsic_a4_checkerboard.svg` | RGB intrinsic | A4 landscape | `9x6` | `0.020` m |
+| `rgb_cubeeye_extrinsic_a3_checkerboard.svg` | RGB-CubeEye extrinsic | A3 landscape | `8x5` | `0.040` m |
+
+출력은 배율 `100%`로 고정한다. extrinsic 보드는 CubeEye가 보는 plane이므로 종이만 들고 찍지 말고 단단하고 평평한 판에 붙인다.
 
 ## CMake 스크립트
 
@@ -149,6 +163,7 @@ scripts/cmake.sh compile-db release-hailo
 - `--cubeeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
 - `depth`와 `pointcloud`는 CubeEye SDK 제약으로 동시에 선택할 수 없다.
 - `--cubeeye-camera-fps <fps>`: CubeEye S111D camera framerate를 지정한다. 허용값은 `7`, `15`, `30`이다.
+- `--depth-projection-downsample <stride>`: `projected_depth` 송출 sample 간격을 지정한다. 기본값은 `4`다.
 - `--pointcloud-downsample <stride>`: pointcloud 송출 downsample 간격을 지정한다. 기본값은 `4`다.
 - `--rtsp`: 지원하지 않는다.
 
@@ -179,12 +194,56 @@ Camera Module 3 + CubeEye:
 ./bin/catcheye-pick --camera-input rgb-cubeeye --detector ncnn --ws --cubeeye-frames pointcloud
 ```
 
-RGB↔CubeEye 오프셋 조정:
+Camera Module 3 + CubeEye depth projection:
+
+```bash
+./bin/catcheye-pick --viewer-only --ws --camera-input rgb-cubeeye --cubeeye-frames depth --depth-projection-downsample 4
+```
+
+`camera`와 `depth`가 같이 들어오면 WebSocket viewer frame에 `projected_depth` stream이 추가된다. 이 stream은 CubeEye SDK `intrinsicParameters()`로 depth pixel을 3D로 복원한 뒤 `rgb_cubeeye_offset.json`의 R/T와 RGB intrinsic으로 RGB image plane에 투영한 `x_px, y_px, depth_m` float 배열이다. CubeEye intrinsic은 config로 받지 않는다. SDK intrinsic을 못 읽으면 `projected_depth`는 생성하지 않는다. RGB 이미지는 다시 JPEG로 만들지 않고 Studio가 현재 `camera` stream 위에 점을 그린다.
+
+`rgb_undistort_enabled`가 `true`면 Camera Module 3 stream은 `rgb_fx/fy/cx/cy`와 `rgb_dist_k1/k2/p1/p2/k3`로 왜곡 보정 후 송출된다. 기본 보정값은 `K=(1220,1220,1152,648)`, `dist=(-0.28,0.08,0,0,-0.01)`이다.
+
+Camera Module 3 런타임 파라미터 조회:
+
+```bash
+curl http://localhost:8090/api/rgb-camera/properties
+```
+
+필요한 값만 노출한다. `sensor-config`, `camera-name`, `stream-role`처럼 pipeline 재시작이 필요한 값은 런타임 API에 넣지 않는다.
+
+```bash
+curl -X PUT http://localhost:8090/api/rgb-camera/properties/exposure-time-mode \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"manual"}'
+
+curl -X PUT http://localhost:8090/api/rgb-camera/properties/exposure-time \
+  -H 'Content-Type: application/json' \
+  -d '{"value":12000}'
+```
+
+RGB intrinsic 캘리브레이션:
+
+```bash
+curl -X DELETE http://localhost:8090/api/rgb-camera/intrinsic-calibration
+
+curl -X POST http://localhost:8090/api/rgb-camera/intrinsic-calibration/capture \
+  -H 'Content-Type: application/json' \
+  -d '{"pattern_width":9,"pattern_height":6,"square_size_m":0.020}'
+
+curl -X POST http://localhost:8090/api/rgb-camera/intrinsic-calibration/solve \
+  -H 'Content-Type: application/json' \
+  -d '{"pattern_width":9,"pattern_height":6,"square_size_m":0.020}'
+```
+
+`capture`는 최신 RGB frame에서 A4 intrinsic 보드 corner가 잡힌 경우만 누적한다. 최소 8장 이상 누적해야 `solve`가 동작한다. `solve`가 성공하면 `config/rgb_cubeeye_offset.json`의 `rgb_fx/fy/cx/cy`, `rgb_dist_*`, `rgb_width/height`를 저장하고 런타임 projection 설정에도 바로 반영한다.
+
+RGB↔CubeEye projection 조정:
 
 ```bash
 curl -X PUT http://localhost:8090/api/rgb-cubeeye-offset \
   -H 'Content-Type: application/json' \
-  -d '{"u":0.00,"v":0.40}'
+  -d '{"tx_m":0.0,"ty_m":0.0,"tz_m":0.0,"roll_deg":0.0,"pitch_deg":0.0,"yaw_deg":0.0,"rgb_undistort_enabled":true}'
 ```
 
 PointCloud ROI 조정:
@@ -260,13 +319,41 @@ Camera Module 3 pipeline 지정:
 - `GET /api/pallet-roi`
 - `PUT /api/pallet-roi`
 - `GET /api/rgb-cubeeye-offset`
-- `PUT /api/rgb-cubeeye-offset` body: `{"u": 0.00, "v": 0.40}`
+- `PUT /api/rgb-cubeeye-offset` body: `{"tx_m": 0.00, "ty_m": 0.00, "tz_m": 0.00, "roll_deg": 0.00, "pitch_deg": 0.00, "yaw_deg": 0.00, "rgb_undistort_enabled": true}`
 - `GET /api/pointcloud-roi`
 - `PUT /api/pointcloud-roi`
 - `GET /api/robot-calibration`
 - `PUT /api/robot-calibration`
 - `GET /api/cubeeye/properties`
 - `PUT /api/cubeeye/properties/{key}` body: `{"value": ...}`
+- `GET /api/rgb-camera/properties`
+- `PUT /api/rgb-camera/properties/{key}` body: `{"value": ...}`
+- `GET /api/rgb-camera/intrinsic-calibration`
+- `DELETE /api/rgb-camera/intrinsic-calibration`
+- `POST /api/rgb-camera/intrinsic-calibration/capture` body: `{"pattern_width": 9, "pattern_height": 6, "square_size_m": 0.020}`
+- `POST /api/rgb-camera/intrinsic-calibration/solve` body: `{"pattern_width": 9, "pattern_height": 6, "square_size_m": 0.020}`
+
+RGB camera property는 `libcamerasrc`의 controllable 값 중 캘리브레이션과 영상 품질에 필요한 것만 지원한다.
+
+| key | type | 설명 |
+| --- | --- | --- |
+| `ae-enable` | bool | 자동 노출 |
+| `ae-metering-mode` | enum | 노출 측광 방식 |
+| `ae-flicker-period` | int | 플리커 보정 주기 us |
+| `exposure-time-mode` | enum | 노출 시간 auto/manual |
+| `exposure-time` | int | 수동 노출 시간 us |
+| `exposure-value` | float | 자동 노출 EV 보정 |
+| `analogue-gain-mode` | enum | 아날로그 게인 auto/manual |
+| `analogue-gain` | float | 수동 아날로그 게인 |
+| `awb-enable` | bool | 자동 화이트밸런스 |
+| `awb-mode` | enum | 화이트밸런스 모드 |
+| `af-mode` | enum | 초점 모드 |
+| `lens-position` | float | 수동 렌즈 위치 |
+| `brightness` | float | 밝기 |
+| `contrast` | float | 대비 |
+| `saturation` | float | 채도 |
+| `sharpness` | float | 선명도 |
+| `gamma` | float | 감마 |
 
 PointCloud ROI body:
 

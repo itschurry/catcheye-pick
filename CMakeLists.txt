@@ -73,7 +73,7 @@ list(REMOVE_DUPLICATES CUBEEYE_LINK_LIBRARIES)
 set(CATCHEYE_VISION_SDK_BUILD_TESTS OFF CACHE BOOL "Build tests for SDK libraries" FORCE)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn imgcodecs videoio)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d dnn imgcodecs videoio)
 find_package(spdlog REQUIRED)
 
 add_subdirectory(

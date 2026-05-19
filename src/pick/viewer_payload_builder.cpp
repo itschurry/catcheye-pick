@@ -1,14 +1,18 @@
 #include "pick/viewer_payload_builder.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include <opencv2/core.hpp>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -101,6 +105,24 @@ cv::Mat normalize_u16_frame_to_bgr(const meere::sensor::sptr_frame& frame)
     cv::Mat colored;
     cv::applyColorMap(normalized, colored, cv::COLORMAP_TURBO);
     return colored;
+}
+
+cv::Matx33f rotation_matrix(float roll_deg, float pitch_deg, float yaw_deg)
+{
+    constexpr float deg_to_rad = static_cast<float>(CV_PI) / 180.0F;
+    const float roll = roll_deg * deg_to_rad;
+    const float pitch = pitch_deg * deg_to_rad;
+    const float yaw = yaw_deg * deg_to_rad;
+    const float sr = std::sin(roll);
+    const float cr = std::cos(roll);
+    const float sp = std::sin(pitch);
+    const float cp = std::cos(pitch);
+    const float sy = std::sin(yaw);
+    const float cy = std::cos(yaw);
+    const cv::Matx33f rx(1.0F, 0.0F, 0.0F, 0.0F, cr, -sr, 0.0F, sr, cr);
+    const cv::Matx33f ry(cp, 0.0F, sp, 0.0F, 1.0F, 0.0F, -sp, 0.0F, cp);
+    const cv::Matx33f rz(cy, -sy, 0.0F, sy, cy, 0.0F, 0.0F, 0.0F, 1.0F);
+    return rz * ry * rx;
 }
 
 cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
@@ -206,11 +228,20 @@ ViewerPayload cubeeye_pointcloud_payload(const CubeEyeFrameEntry& entry, int dow
 
 } // namespace
 
-ViewerPayload camera_payload(const catcheye::input::Frame& frame)
+ViewerPayload camera_payload(const catcheye::input::Frame& frame, const RgbCubeEyeOffset& rgb_cubeeye_offset)
 {
-    const cv::Mat bgr = frame_to_bgr(frame);
+    cv::Mat bgr = frame_to_bgr(frame);
     if (bgr.empty()) {
         throw std::runtime_error("failed to convert Camera Module 3 frame");
+    }
+    if (rgb_cubeeye_offset.rgb_undistort_enabled) {
+        const cv::Mat camera_matrix = (cv::Mat_<double>(3, 3) << rgb_cubeeye_offset.rgb_fx, 0.0, rgb_cubeeye_offset.rgb_cx, 0.0,
+                                       rgb_cubeeye_offset.rgb_fy, rgb_cubeeye_offset.rgb_cy, 0.0, 0.0, 1.0);
+        const cv::Mat dist_coeffs = (cv::Mat_<double>(1, 5) << rgb_cubeeye_offset.rgb_dist_k1, rgb_cubeeye_offset.rgb_dist_k2,
+                                     rgb_cubeeye_offset.rgb_dist_p1, rgb_cubeeye_offset.rgb_dist_p2, rgb_cubeeye_offset.rgb_dist_k3);
+        cv::Mat undistorted;
+        cv::undistort(bgr, undistorted, camera_matrix, dist_coeffs, camera_matrix);
+        bgr = std::move(undistorted);
     }
     return ViewerPayload{
         .name = "camera_module_3",
@@ -222,6 +253,101 @@ ViewerPayload camera_payload(const catcheye::input::Frame& frame)
         .stride = 1,
         .source_timestamp_ms = static_cast<std::uint64_t>(frame.timestamp),
         .bytes = encode_jpeg(bgr),
+    };
+}
+
+std::optional<ViewerPayload> projected_depth_payload(
+    const catcheye::input::Frame& camera_frame,
+    const CubeEyeFrameEntry& depth_entry,
+    const std::optional<CubeEyeIntrinsics>& cubeeye_intrinsics,
+    const RgbCubeEyeOffset& rgb_cubeeye_offset,
+    int stride)
+{
+    if (depth_entry.spec.type != meere::sensor::FrameType::Depth || stride <= 0) {
+        return std::nullopt;
+    }
+
+    const auto depth = meere::sensor::frame_cast_basic16u(depth_entry.frame);
+    if (!depth || !depth->frameData() || depth->frameData()->empty()) {
+        return std::nullopt;
+    }
+    if (!cubeeye_intrinsics || cubeeye_intrinsics->fx <= 0.0F || cubeeye_intrinsics->fy <= 0.0F) {
+        return std::nullopt;
+    }
+
+    const int depth_width = depth->frameWidth();
+    const int depth_height = depth->frameHeight();
+    if (depth_width <= 0 || depth_height <= 0) {
+        return std::nullopt;
+    }
+
+    const auto expected_count = static_cast<std::size_t>(depth_width) * static_cast<std::size_t>(depth_height);
+    const auto* depth_values = depth->frameData();
+    if (depth_values->size() < expected_count) {
+        return std::nullopt;
+    }
+
+    const auto* data = depth_values->data();
+    const cv::Matx33f depth_to_rgb_rotation =
+        rotation_matrix(rgb_cubeeye_offset.roll_deg, rgb_cubeeye_offset.pitch_deg, rgb_cubeeye_offset.yaw_deg);
+    const cv::Vec3f depth_to_rgb_translation(rgb_cubeeye_offset.tx_m, rgb_cubeeye_offset.ty_m, rgb_cubeeye_offset.tz_m);
+    const float scale_x = static_cast<float>(camera_frame.width) / static_cast<float>(rgb_cubeeye_offset.rgb_width);
+    const float scale_y = static_cast<float>(camera_frame.height) / static_cast<float>(rgb_cubeeye_offset.rgb_height);
+    const float depth_fx = cubeeye_intrinsics->fx;
+    const float depth_fy = cubeeye_intrinsics->fy;
+    const float depth_cx = cubeeye_intrinsics->cx;
+    const float depth_cy = cubeeye_intrinsics->cy;
+
+    std::vector<std::uint8_t> bytes;
+    bytes.reserve(((expected_count + static_cast<std::size_t>(stride) - 1U) / static_cast<std::size_t>(stride)) * 3U * sizeof(float));
+    std::uint64_t point_count = 0;
+    for (int y = 0; y < depth_height; y += stride) {
+        for (int x = 0; x < depth_width; x += stride) {
+            const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(depth_width) + static_cast<std::size_t>(x);
+            const float value = static_cast<float>(data[index]);
+            if (value <= 0.0F) {
+                continue;
+            }
+
+            const float z_depth = value * 0.001F;
+            const float x_depth = ((static_cast<float>(x) - depth_cx) / depth_fx) * z_depth;
+            const float y_depth = ((static_cast<float>(y) - depth_cy) / depth_fy) * z_depth;
+            const cv::Vec3f depth_point(x_depth, y_depth, z_depth);
+            const cv::Vec3f camera_point = depth_to_rgb_rotation * depth_point + depth_to_rgb_translation;
+            if (camera_point[2] <= 0.0F) {
+                continue;
+            }
+
+            const float rgb_xf = ((rgb_cubeeye_offset.rgb_fx * (camera_point[0] / camera_point[2])) + rgb_cubeeye_offset.rgb_cx) * scale_x;
+            const float rgb_yf = ((rgb_cubeeye_offset.rgb_fy * (camera_point[1] / camera_point[2])) + rgb_cubeeye_offset.rgb_cy) * scale_y;
+            if (rgb_xf < 0.0F || rgb_xf >= static_cast<float>(camera_frame.width) || rgb_yf < 0.0F ||
+                rgb_yf >= static_cast<float>(camera_frame.height)) {
+                continue;
+            }
+
+            const std::size_t offset = bytes.size();
+            bytes.resize(offset + (3U * sizeof(float)));
+            std::uint8_t* output = bytes.data() + offset;
+            write_float32_le(output, rgb_xf);
+            write_float32_le(output, rgb_yf);
+            write_float32_le(output, z_depth);
+            ++point_count;
+        }
+    }
+    if (point_count == 0) {
+        return std::nullopt;
+    }
+
+    return ViewerPayload{
+        .name = "projected_depth",
+        .kind = "projected_depth",
+        .encoding = "projected_depth_xy_depth_f32",
+        .width = camera_frame.width,
+        .height = camera_frame.height,
+        .point_count = point_count,
+        .stride = stride,
+        .source_timestamp_ms = static_cast<std::uint64_t>(depth_entry.frame->timestamp()),
+        .bytes = std::move(bytes),
     };
 }
 

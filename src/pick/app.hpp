@@ -41,6 +41,7 @@ struct AppOptions {
     std::string robot_calibration_config_path;
     int cubeeye_camera_fps = 0;
     int pointcloud_downsample = 4;
+    int depth_projection_downsample = 4;
     int num_threads = 2;
     bool camera_pipeline_set = false;
     bool cubeeye_frames_set = false;
