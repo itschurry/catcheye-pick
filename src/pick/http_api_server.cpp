@@ -299,6 +299,14 @@ bool HttpApiServer::start()
         .bind_address = config_.bind_address,
         .port = config_.port,
     });
+
+    server_->add_route("/api/device-info", [](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return catcheye::http::HttpResponse{200, "OK", R"({"app":"catcheye-pick","kind":"pick"})"};
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
     catcheye::http::register_roi_routes(
         *server_,
         catcheye::http::RoiApiConfig{
@@ -755,6 +763,9 @@ catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_extrinsic(con
     has_field = parse_float_field(body, "roll_deg", config.roll_deg) || has_field;
     has_field = parse_float_field(body, "pitch_deg", config.pitch_deg) || has_field;
     has_field = parse_float_field(body, "yaw_deg", config.yaw_deg) || has_field;
+    has_field = parse_bool_field(body, "cubeeye_distortion_correction_enabled",
+                                 config.cubeeye_distortion_correction_enabled) ||
+                has_field;
     if (!has_field) {
         return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye extrinsic JSON body")};
     }

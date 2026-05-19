@@ -173,6 +173,7 @@ RgbCubeEyeExtrinsicConfig load_rgb_cubeeye_extrinsic_config(const std::string& p
     parse_float_field(json, "roll_deg", config.roll_deg);
     parse_float_field(json, "pitch_deg", config.pitch_deg);
     parse_float_field(json, "yaw_deg", config.yaw_deg);
+    parse_bool_field(json, "cubeeye_distortion_correction_enabled", config.cubeeye_distortion_correction_enabled);
     if (!is_valid_rgb_cubeeye_extrinsic_config(config)) {
         throw std::runtime_error("invalid RGB CubeEye extrinsic config: " + path);
     }
@@ -188,7 +189,9 @@ std::string rgb_cubeeye_extrinsic_config_to_json(RgbCubeEyeExtrinsicConfig confi
         << "  \"tz_m\": " << config.tz_m << ",\n"
         << "  \"roll_deg\": " << config.roll_deg << ",\n"
         << "  \"pitch_deg\": " << config.pitch_deg << ",\n"
-        << "  \"yaw_deg\": " << config.yaw_deg << "\n"
+        << "  \"yaw_deg\": " << config.yaw_deg << ",\n"
+        << "  \"cubeeye_distortion_correction_enabled\": "
+        << (config.cubeeye_distortion_correction_enabled ? "true" : "false") << "\n"
         << "}\n";
     return oss.str();
 }

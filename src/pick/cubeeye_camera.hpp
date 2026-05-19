@@ -26,6 +26,16 @@ struct CubeEyeIntrinsics {
     float fy = 0.0F;
     float cx = 0.0F;
     float cy = 0.0F;
+    bool distortion_valid = false;
+    float dist_k1 = 0.0F;
+    float dist_k2 = 0.0F;
+    float dist_k3 = 0.0F;
+    float dist_k4 = 0.0F;
+    float dist_k5 = 0.0F;
+    float dist_k6 = 0.0F;
+    float dist_p1 = 0.0F;
+    float dist_p2 = 0.0F;
+    float skew = 0.0F;
 };
 
 struct CubeEyeFrameSet {

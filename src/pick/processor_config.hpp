@@ -38,6 +38,7 @@ struct RgbCubeEyeExtrinsicConfig {
     float roll_deg = 0.0F;
     float pitch_deg = 0.0F;
     float yaw_deg = 0.0F;
+    bool cubeeye_distortion_correction_enabled = false;
 };
 
 struct PointCloudRoiConfig {

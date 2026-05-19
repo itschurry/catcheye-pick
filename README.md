@@ -16,6 +16,7 @@ Raspberry Pi ARM64 환경을 대상으로 빌드하고 배포하는 picking 애�
 - NCNN/Hailo detector 선택
 - CubeEye frame 선택 옵션
 - Guard와 동일한 ROI HTTP API
+- Studio 연결 대상 식별 HTTP API
 - RGB-CubeEye offset HTTP API
 - RGB intrinsic calibration HTTP API
 - PointCloud ROI HTTP API
@@ -158,7 +159,7 @@ scripts/cmake.sh compile-db release-hailo
 - `--roi <path>`: Person ROI config 경로를 지정한다.
 - `--pallet-roi <path>`: Pallet ROI config 경로를 지정한다.
 - `--rgb-intrinsic <path>`: RGB intrinsic config 경로를 지정한다. 기본값은 `config/rgb_intrinsic.json`이다.
-- `--rgb-cubeeye-extrinsic <path>`: RGB-CubeEye extrinsic config 경로를 지정한다. 기본값은 `config/rgb_cubeeye_extrinsic.json`이다.
+- `--rgb-cubeeye-extrinsic <path>`: CubeEye→RGB extrinsic config 경로를 지정한다. 기본값은 `config/rgb_cubeeye_extrinsic.json`이다.
 - `--pointcloud-roi <path>`: PointCloud X/Y/Z ROI config 경로를 지정한다. 기본값은 `config/pointcloud_roi.json`이다.
 - `--robot-calibration <path>`: Robot calibration config 경로를 지정한다. 기본값은 `config/robot_calibration.json`이다.
 - `--cubeeye-frames <list>`: CubeEye frame 목록을 지정한다. 기본값은 `depth,amplitude`다.
@@ -201,9 +202,11 @@ Camera Module 3 + CubeEye depth projection:
 ./bin/catcheye-pick --viewer-only --ws --camera-input rgb-cubeeye --cubeeye-frames depth --depth-projection-downsample 4
 ```
 
-`camera`와 `depth`가 같이 들어오면 WebSocket viewer frame에 `projected_depth` stream이 추가된다. 이 stream은 CubeEye SDK `intrinsicParameters()`로 depth pixel을 3D로 복원한 뒤 `rgb_intrinsic.json`과 `rgb_cubeeye_extrinsic.json`으로 RGB image plane에 투영한 `x_px, y_px, depth_m` float 배열이다. CubeEye intrinsic은 config로 받지 않는다. SDK intrinsic을 못 읽으면 `projected_depth`는 생성하지 않는다. RGB 이미지는 다시 JPEG로 만들지 않고 Studio가 현재 `camera` stream 위에 점을 그린다.
+`camera`와 `depth`가 같이 들어오면 WebSocket viewer frame에 `projected_depth` stream이 추가된다. 이 stream은 CubeEye SDK `intrinsicParameters()`로 depth pixel을 CubeEye 3D로 복원한 뒤 `rgb_cubeeye_extrinsic.json`의 CubeEye→RGB R/T로 RGB 좌표로 바꾸고, `rgb_intrinsic.json`의 RGB intrinsic으로 RGB image plane에 투영한 `x_px, y_px, depth_m` float 배열이다. Camera Module 3 frame은 GStreamer pipeline에서 이미 `videoflip method=rotate-180`으로 들어오므로 projected depth pixel 좌표는 추가로 180도 뒤집지 않는다. CubeEye intrinsic은 config로 받지 않는다. SDK intrinsic을 못 읽으면 `projected_depth`는 생성하지 않는다. RGB 이미지는 다시 JPEG로 만들지 않고 Studio가 현재 `camera` stream 위에 점을 그린다.
 
-`rgb_intrinsic.json`의 `undistort_enabled`가 `true`면 Camera Module 3 stream은 `fx/fy/cx/cy`와 `dist_k1/k2/p1/p2/k3`로 왜곡 보정 후 송출된다. 기본 보정값은 `K=(1220,1220,1152,648)`, `dist=(-0.28,0.08,0,0,-0.01)`이다.
+`rgb_intrinsic.json`의 `undistort_enabled`가 `true`면 Camera Module 3 stream은 `fx/fy/cx/cy`와 `dist_k1/k2/p1/p2/k3`로 왜곡 보정 후 송출되고, projected depth는 ideal pinhole 좌표로 투영된다. `undistort_enabled`가 `false`면 Camera Module 3 원본 stream 위에 맞도록 projected depth 좌표에도 같은 RGB distortion을 forward 적용한다. 기본 보정값은 `K=(1220,1220,1152,648)`, `dist=(-0.28,0.08,0,0,-0.01)`이다.
+
+`rgb_cubeeye_extrinsic.json`의 `cubeeye_distortion_correction_enabled`가 `true`면 CubeEye SDK `distortionCoefficients()` 값으로 depth pixel을 먼저 보정한 뒤 3D로 복원한다. 이 값이 켜져 있는데 SDK distortion 값을 못 읽으면 `projected_depth`는 생성하지 않는다. CubeEye depth frame이 이미 rectified면 이 값은 `false`로 둬.
 
 Camera Module 3 런타임 파라미터 조회:
 
@@ -245,7 +248,7 @@ curl -X POST http://localhost:8090/api/rgb-camera/intrinsic-calibration/solve \
 
 `capture`는 최신 RGB frame에서 A4 intrinsic 보드 corner가 잡힌 경우만 누적한다. 최소 8장 이상 누적해야 `solve`가 동작한다. `solve`가 성공하면 `config/rgb_intrinsic.json`의 `fx/fy/cx/cy`, `dist_*`, `width/height`를 저장하고 런타임 projection 설정에도 바로 반영한다.
 
-RGB↔CubeEye extrinsic 조정:
+CubeEye→RGB extrinsic 조정:
 
 ```bash
 curl -X PUT http://localhost:8090/api/rgb-cubeeye/extrinsic \
@@ -316,11 +319,12 @@ CubeEye pointcloud:
 Camera Module 3 pipeline 지정:
 
 ```bash
-./bin/catcheye-pick --viewer-only --ws --camera-pipeline "libcamerasrc ! video/x-raw,width=1920,height=1080,framerate=10/1,format=NV12 ! videoflip method=rotate-180"
+./bin/catcheye-pick --viewer-only --ws --camera-pipeline "libcamerasrc ! video/x-raw,width=2304,height=1296,framerate=15/1,format=NV12 ! queue leaky=downstream max-size-buffers=1 ! videoflip method=rotate-180"
 ```
 
 ## HTTP API
 
+- `GET /api/device-info` response: `{"app":"catcheye-pick","kind":"pick"}`
 - `GET /api/roi`
 - `PUT /api/roi`
 - `GET /api/pallet-roi`

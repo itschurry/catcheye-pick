@@ -125,6 +125,42 @@ cv::Matx33f rotation_matrix(float roll_deg, float pitch_deg, float yaw_deg)
     return rz * ry * rx;
 }
 
+cv::Point2f distort_normalized_rgb_point(float x, float y, const RgbIntrinsicConfig& rgb_intrinsic)
+{
+    const float r2 = (x * x) + (y * y);
+    const float r4 = r2 * r2;
+    const float r6 = r4 * r2;
+    const float radial = 1.0F + (rgb_intrinsic.dist_k1 * r2) + (rgb_intrinsic.dist_k2 * r4) + (rgb_intrinsic.dist_k3 * r6);
+    const float xy2 = 2.0F * x * y;
+    const float x_distorted = (x * radial) + (rgb_intrinsic.dist_p1 * xy2) + (rgb_intrinsic.dist_p2 * (r2 + (2.0F * x * x)));
+    const float y_distorted = (y * radial) + (rgb_intrinsic.dist_p1 * (r2 + (2.0F * y * y))) + (rgb_intrinsic.dist_p2 * xy2);
+    return {x_distorted, y_distorted};
+}
+
+cv::Point2f undistort_normalized_cubeeye_point(float x_distorted, float y_distorted, const CubeEyeIntrinsics& intrinsics)
+{
+    float x = x_distorted;
+    float y = y_distorted;
+    for (int i = 0; i < 5; ++i) {
+        const float r2 = (x * x) + (y * y);
+        const float r4 = r2 * r2;
+        const float r6 = r4 * r2;
+        const float radial_numerator =
+            1.0F + (intrinsics.dist_k1 * r2) + (intrinsics.dist_k2 * r4) + (intrinsics.dist_k3 * r6);
+        const float radial_denominator =
+            1.0F + (intrinsics.dist_k4 * r2) + (intrinsics.dist_k5 * r4) + (intrinsics.dist_k6 * r6);
+        const float radial = std::abs(radial_denominator) < 1.0e-6F ? radial_numerator : radial_numerator / radial_denominator;
+        if (std::abs(radial) < 1.0e-6F) {
+            break;
+        }
+        const float x_tangential = (2.0F * intrinsics.dist_p1 * x * y) + (intrinsics.dist_p2 * (r2 + (2.0F * x * x)));
+        const float y_tangential = (intrinsics.dist_p1 * (r2 + (2.0F * y * y))) + (2.0F * intrinsics.dist_p2 * x * y);
+        x = (x_distorted - x_tangential) / radial;
+        y = (y_distorted - y_tangential) / radial;
+    }
+    return {x, y};
+}
+
 cv::Mat rgb_frame_to_bgr(const meere::sensor::sptr_frame& frame)
 {
     const auto basic = meere::sensor::frame_cast_basic8u(frame);
@@ -275,6 +311,9 @@ std::optional<ViewerPayload> projected_depth_payload(
     if (!cubeeye_intrinsics || cubeeye_intrinsics->fx <= 0.0F || cubeeye_intrinsics->fy <= 0.0F) {
         return std::nullopt;
     }
+    if (rgb_cubeeye_extrinsic.cubeeye_distortion_correction_enabled && !cubeeye_intrinsics->distortion_valid) {
+        return std::nullopt;
+    }
 
     const int depth_width = depth->frameWidth();
     const int depth_height = depth->frameHeight();
@@ -311,16 +350,31 @@ std::optional<ViewerPayload> projected_depth_payload(
             }
 
             const float z_depth = value * 0.001F;
-            const float x_depth = ((static_cast<float>(x) - depth_cx) / depth_fx) * z_depth;
-            const float y_depth = ((static_cast<float>(y) - depth_cy) / depth_fy) * z_depth;
+            float x_depth_normalized = (static_cast<float>(x) - depth_cx) / depth_fx;
+            float y_depth_normalized = (static_cast<float>(y) - depth_cy) / depth_fy;
+            if (rgb_cubeeye_extrinsic.cubeeye_distortion_correction_enabled && cubeeye_intrinsics->distortion_valid) {
+                const cv::Point2f undistorted =
+                    undistort_normalized_cubeeye_point(x_depth_normalized, y_depth_normalized, *cubeeye_intrinsics);
+                x_depth_normalized = undistorted.x;
+                y_depth_normalized = undistorted.y;
+            }
+            const float x_depth = x_depth_normalized * z_depth;
+            const float y_depth = y_depth_normalized * z_depth;
             const cv::Vec3f depth_point(x_depth, y_depth, z_depth);
             const cv::Vec3f camera_point = depth_to_rgb_rotation * depth_point + depth_to_rgb_translation;
             if (camera_point[2] <= 0.0F) {
                 continue;
             }
 
-            const float rgb_xf = ((rgb_intrinsic.fx * (camera_point[0] / camera_point[2])) + rgb_intrinsic.cx) * scale_x;
-            const float rgb_yf = ((rgb_intrinsic.fy * (camera_point[1] / camera_point[2])) + rgb_intrinsic.cy) * scale_y;
+            float rgb_xn = camera_point[0] / camera_point[2];
+            float rgb_yn = camera_point[1] / camera_point[2];
+            if (!rgb_intrinsic.undistort_enabled) {
+                const cv::Point2f distorted = distort_normalized_rgb_point(rgb_xn, rgb_yn, rgb_intrinsic);
+                rgb_xn = distorted.x;
+                rgb_yn = distorted.y;
+            }
+            const float rgb_xf = ((rgb_intrinsic.fx * rgb_xn) + rgb_intrinsic.cx) * scale_x;
+            const float rgb_yf = ((rgb_intrinsic.fy * rgb_yn) + rgb_intrinsic.cy) * scale_y;
             if (rgb_xf < 0.0F || rgb_xf >= static_cast<float>(camera_frame.width) || rgb_yf < 0.0F ||
                 rgb_yf >= static_cast<float>(camera_frame.height)) {
                 continue;

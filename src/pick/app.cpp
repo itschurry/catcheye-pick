@@ -36,7 +36,7 @@ namespace catcheye::pick {
 namespace {
 
 constexpr std::string_view DEFAULT_CAMERA_PIPELINE =
-    "libcamerasrc ! video/x-raw,width=1920,height=1080,framerate=10/1,format=NV12 ! videoflip method=rotate-180";
+    "libcamerasrc ! video/x-raw,width=2304,height=1296,framerate=15/1,format=NV12 ! queue leaky=downstream max-size-buffers=1 ! videoflip method=rotate-180";
 constexpr int CAMERA_READ_SLEEP_MS = 1;
 
 void print_usage() {
@@ -58,7 +58,7 @@ void print_usage() {
               << "  --roi <path>              Person ROI config path\n"
               << "  --pallet-roi <path>       Pallet ROI config path\n"
               << "  --rgb-intrinsic <path>  RGB intrinsic config path\n"
-              << "  --rgb-cubeeye-extrinsic <path>  RGB to CubeEye extrinsic config path\n"
+              << "  --rgb-cubeeye-extrinsic <path>  CubeEye to RGB extrinsic config path\n"
               << "  --pointcloud-roi <path>  PointCloud X/Y/Z ROI config path\n"
               << "  --robot-calibration <path>  Robot calibration config path\n"
               << "  --cubeeye-frames <list>    CubeEye frames: depth, amplitude, rgb, pointcloud (depth and pointcloud are exclusive)\n"

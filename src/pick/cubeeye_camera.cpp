@@ -223,16 +223,31 @@ void CubeEyeCameraSession::open()
     }
     meere::sensor::IntrinsicParameters intrinsics;
     if (camera_->intrinsicParameters(intrinsics) == meere::sensor::result::success) {
-        capture_.set_intrinsics(CubeEyeIntrinsics{
+        CubeEyeIntrinsics cubeeye_intrinsics{
             .fx = intrinsics.focal.fx,
             .fy = intrinsics.focal.fy,
             .cx = intrinsics.principal.cx,
             .cy = intrinsics.principal.cy,
-        });
+        };
+        meere::sensor::DistortionCoefficients distortion;
+        if (camera_->distortionCoefficients(distortion) == meere::sensor::result::success) {
+            cubeeye_intrinsics.distortion_valid = true;
+            cubeeye_intrinsics.dist_k1 = static_cast<float>(distortion.radial.k1);
+            cubeeye_intrinsics.dist_k2 = static_cast<float>(distortion.radial.k2);
+            cubeeye_intrinsics.dist_k3 = static_cast<float>(distortion.radial.k3);
+            cubeeye_intrinsics.dist_k4 = static_cast<float>(distortion.radial.k4);
+            cubeeye_intrinsics.dist_k5 = static_cast<float>(distortion.radial.k5);
+            cubeeye_intrinsics.dist_k6 = static_cast<float>(distortion.radial.k6);
+            cubeeye_intrinsics.dist_p1 = static_cast<float>(distortion.tangential.p1);
+            cubeeye_intrinsics.dist_p2 = static_cast<float>(distortion.tangential.p2);
+            cubeeye_intrinsics.skew = static_cast<float>(distortion.skewCoefficient);
+        }
+        capture_.set_intrinsics(cubeeye_intrinsics);
         std::cerr << "CubeEye intrinsics fx=" << intrinsics.focal.fx
                   << " fy=" << intrinsics.focal.fy
                   << " cx=" << intrinsics.principal.cx
-                  << " cy=" << intrinsics.principal.cy << '\n';
+                  << " cy=" << intrinsics.principal.cy
+                  << " distortion=" << (cubeeye_intrinsics.distortion_valid ? "yes" : "no") << '\n';
     }
     if (camera_fps_ > 0) {
         const auto property = meere::sensor::make_property_8u(
