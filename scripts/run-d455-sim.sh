@@ -11,4 +11,4 @@ exec "$CATCHEYE_PICK_PATH/bin/catcheye-pick" \
   --ws \
   --viewer-only \
   --camera-input rgb \
-  --camera-pipeline "souphttpsrc location=http://$ISAACSIM_PORT:$ISAACSIM_PORT/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
+  --camera-pipeline "souphttpsrc location=http://$ISAACSIM_HOST:$ISAACSIM_PORT/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
