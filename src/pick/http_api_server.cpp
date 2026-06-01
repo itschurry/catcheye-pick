@@ -190,6 +190,14 @@ bool HttpApiServer::start()
         .bind_address = config_.bind_address,
         .port = config_.port,
     });
+
+    server_->add_route("/api/device-info", [](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return catcheye::http::HttpResponse{200, "OK", R"({"app":"catcheye-pick","kind":"pick"})"};
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
     catcheye::http::register_roi_routes(
         *server_,
         catcheye::http::RoiApiConfig{
