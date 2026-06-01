@@ -305,6 +305,7 @@ install(PROGRAMS
     scripts/run-rgb-ncnn.sh
     scripts/run-rgb-pcl.sh
     scripts/run-rgb.sh
+    scripts/run-d455-sim.sh
     DESTINATION scripts
 )
 
