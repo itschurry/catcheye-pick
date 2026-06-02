@@ -91,7 +91,7 @@ ViewerPayload camera_payload(const catcheye::input::Frame& frame)
         throw std::runtime_error("failed to convert Camera Module 3 frame");
     }
     return ViewerPayload{
-        .name = "realsense_d455_sim",
+        .name = "camera",
         .kind = "camera",
         .encoding = "jpeg",
         .width = bgr.cols,
@@ -110,7 +110,7 @@ ViewerPayload depth_payload(const catcheye::input::Frame& frame)
         throw std::runtime_error("failed to convert RealSense D455 depth frame");
     }
     return ViewerPayload{
-        .name = "realsense_d455_depth",
+        .name = "depth",
         .kind = "depth",
         .encoding = "jpeg",
         .width = bgr.cols,

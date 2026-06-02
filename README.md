@@ -2,7 +2,7 @@
 
 RealSense D455 Isaac Sim 영상 수신용 CatchEye Pick 앱이다.
 
-이 브랜치는 `codex/realsense-d455-sim` 기준이다. Isaac Sim 서버가 송출하는 D455 RGB MJPEG 스트림을 GStreamer로 받아 WebSocket으로 다시 송출한다.
+이 브랜치는 `codex/realsense-d455-sim` 기준이다. Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 받아 WebSocket으로 다시 송출한다.
 
 ## 설치
 
@@ -52,7 +52,8 @@ Hailo detection + WebSocket:
   --ws 8080 \
   --viewer-only \
   --camera-input rgb \
-  --camera-pipeline "souphttpsrc location=http://210.120.123.164:8080/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
+  --camera-pipeline "souphttpsrc location=http://210.120.123.164:8080/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720" \
+  --depth-pipeline "souphttpsrc location=http://210.120.123.164:8080/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
 ```
 
 ## 주요 옵션
@@ -61,7 +62,7 @@ Hailo detection + WebSocket:
 | --- | --- |
 | `--camera-input rgb` | RGB 영상 입력만 사용 |
 | `--camera-pipeline <pipe>` | GStreamer 입력 파이프라인 |
-| `--depth-pipeline <pipe>` | GStreamer depth visualization 입력 파이프라인 |
+| `--depth-pipeline <pipe>` | GStreamer depth MJPEG 입력 파이프라인 |
 | `--viewer-only` | detection 없이 영상만 송출 |
 | `--ws [port]` | WebSocket 송출 활성화, 기본 `8080` |
 | `--http-port <port>` | HTTP API 포트, 기본 `8090` |
