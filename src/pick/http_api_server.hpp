@@ -7,7 +7,6 @@
 
 namespace catcheye::pick {
 
-class CubeEyeCameraSession;
 class PickProcessor;
 
 struct HttpApiServerConfig {
@@ -21,34 +20,28 @@ class HttpApiServer final {
         HttpApiServerConfig config,
         std::string roi_config_path,
         std::string pallet_roi_config_path,
-        std::string rgb_cubeeye_offset_config_path,
-        std::string pointcloud_roi_config_path,
+        std::string intrinsics_config_path,
+        std::string extrinsics_config_path,
         std::string robot_calibration_config_path,
-        PickProcessor* processor,
-        CubeEyeCameraSession* cubeeye);
+        PickProcessor* processor);
     ~HttpApiServer();
 
     bool start();
     void stop();
 
   private:
-    catcheye::http::HttpResponse handle_get_cubeeye_properties() const;
-    catcheye::http::HttpResponse handle_put_cubeeye_property(const std::string& key, const std::string& body) const;
-    catcheye::http::HttpResponse handle_get_rgb_cubeeye_offset() const;
-    catcheye::http::HttpResponse handle_put_rgb_cubeeye_offset(const std::string& body) const;
-    catcheye::http::HttpResponse handle_get_pointcloud_roi_config() const;
-    catcheye::http::HttpResponse handle_put_pointcloud_roi_config(const std::string& body) const;
+    catcheye::http::HttpResponse handle_get_intrinsics() const;
+    catcheye::http::HttpResponse handle_get_extrinsics() const;
     catcheye::http::HttpResponse handle_get_robot_calibration() const;
     catcheye::http::HttpResponse handle_put_robot_calibration(const std::string& body) const;
 
     HttpApiServerConfig config_;
     std::string roi_config_path_;
     std::string pallet_roi_config_path_;
-    std::string rgb_cubeeye_offset_config_path_;
-    std::string pointcloud_roi_config_path_;
+    std::string intrinsics_config_path_;
+    std::string extrinsics_config_path_;
     std::string robot_calibration_config_path_;
     PickProcessor* processor_ = nullptr;
-    CubeEyeCameraSession* cubeeye_ = nullptr;
     std::unique_ptr<catcheye::http::HttpServer> server_;
 };
 

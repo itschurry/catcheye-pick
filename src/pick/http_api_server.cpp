@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cmath>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -11,27 +12,11 @@
 
 #include "catcheye/http/roi_api.hpp"
 #include "pick/config_json.hpp"
-#include "pick/cubeeye_camera.hpp"
-#include "pick/pointcloud_roi_repository.hpp"
 #include "pick/processor.hpp"
-#include "pick/rgb_cubeeye_offset_repository.hpp"
 #include "pick/robot_calibration_repository.hpp"
 
 namespace catcheye::pick {
 namespace {
-
-struct JsonValue {
-    enum class Type {
-        Boolean,
-        Integer,
-        Float,
-    };
-
-    Type type = Type::Integer;
-    bool bool_value = false;
-    int int_value = 0;
-    float float_value = 0.0F;
-};
 
 std::string trim(std::string value)
 {
@@ -42,89 +27,6 @@ std::string trim(std::string value)
         value.pop_back();
     }
     return value;
-}
-
-bool is_supported_cubeeye_property(std::string_view key)
-{
-    return key == "framerate" || key == "auto_exposure" || key == "illumination" || key == "depth_range_min" || key == "depth_range_max" ||
-           key == "amplitude_time_filter" || key == "depth_average_median_filter" || key == "depth_time_filter" ||
-           key == "flying_pixel_remove_filter" || key == "noise_filter1" || key == "noise_filter2" || key == "noise_filter3" ||
-           key == "amplitude_threshold_min" || key == "amplitude_threshold_max" || key == "amplitude_time_spatial_threshold" ||
-           key == "amplitude_time_temporal_threshold" || key == "depth_average_median_max_n" || key == "depth_offset" ||
-           key == "depth_time_spatial_threshold" || key == "depth_time_temporal_threshold" || key == "flying_pixel_remove_threshold" ||
-           key == "integration_time" || key == "motion_blur_frequency" || key == "motion_blur_threshold" ||
-           key == "motion_blur_threshold2" || key == "scattering_threshold";
-}
-
-bool is_bool_cubeeye_property(std::string_view key)
-{
-    return key == "auto_exposure" || key == "illumination" || key == "amplitude_time_filter" || key == "depth_average_median_filter" ||
-           key == "depth_time_filter" || key == "flying_pixel_remove_filter" || key == "noise_filter1" || key == "noise_filter2" ||
-           key == "noise_filter3";
-}
-
-bool is_float_cubeeye_property(std::string_view key)
-{
-    return key == "amplitude_time_spatial_threshold" || key == "amplitude_time_temporal_threshold" ||
-           key == "depth_time_spatial_threshold" || key == "depth_time_temporal_threshold";
-}
-
-bool valid_int_value(std::string_view key, int value)
-{
-    if (key == "framerate") {
-        return value == 7 || value == 15 || value == 30;
-    }
-    if (key == "depth_range_min" || key == "depth_range_max") {
-        return value >= 0 && value <= 8192;
-    }
-    return value >= 0;
-}
-
-bool parse_value_body(std::string_view body, JsonValue& output)
-{
-    const std::size_t key_pos = body.find("\"value\"");
-    if (key_pos == std::string_view::npos) {
-        return false;
-    }
-    const std::size_t colon_pos = body.find(':', key_pos);
-    if (colon_pos == std::string_view::npos) {
-        return false;
-    }
-
-    std::string value_text = trim(std::string(body.substr(colon_pos + 1U)));
-    if (!value_text.empty() && value_text.back() == '}') {
-        value_text.pop_back();
-    }
-    value_text = trim(value_text);
-    if (value_text == "true" || value_text == "false") {
-        output.type = JsonValue::Type::Boolean;
-        output.bool_value = value_text == "true";
-        return true;
-    }
-
-    try {
-        std::size_t consumed = 0;
-        const int value = std::stoi(value_text, &consumed);
-        if (consumed == value_text.size()) {
-            output.type = JsonValue::Type::Integer;
-            output.int_value = value;
-            return true;
-        }
-    } catch (...) {
-    }
-
-    try {
-        std::size_t consumed = 0;
-        const float value = std::stof(value_text, &consumed);
-        if (consumed != value_text.size() || !std::isfinite(value)) {
-            return false;
-        }
-        output.type = JsonValue::Type::Float;
-        output.float_value = value;
-        return true;
-    } catch (...) {
-        return false;
-    }
 }
 
 bool parse_float_field(std::string_view body, std::string_view key, float& output)
@@ -151,25 +53,38 @@ bool parse_float_field(std::string_view body, std::string_view key, float& outpu
     }
 }
 
+std::string read_json_file(const std::string& path)
+{
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("failed to open JSON config: " + path);
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    const std::string body = buffer.str();
+    if (body.empty()) {
+        throw std::runtime_error("empty JSON config: " + path);
+    }
+    return body;
+}
+
 } // namespace
 
 HttpApiServer::HttpApiServer(
     HttpApiServerConfig config,
     std::string roi_config_path,
     std::string pallet_roi_config_path,
-    std::string rgb_cubeeye_offset_config_path,
-    std::string pointcloud_roi_config_path,
+    std::string intrinsics_config_path,
+    std::string extrinsics_config_path,
     std::string robot_calibration_config_path,
-    PickProcessor* processor,
-    CubeEyeCameraSession* cubeeye)
+    PickProcessor* processor)
     : config_(std::move(config)),
       roi_config_path_(std::move(roi_config_path)),
       pallet_roi_config_path_(std::move(pallet_roi_config_path)),
-      rgb_cubeeye_offset_config_path_(std::move(rgb_cubeeye_offset_config_path)),
-      pointcloud_roi_config_path_(std::move(pointcloud_roi_config_path)),
+      intrinsics_config_path_(std::move(intrinsics_config_path)),
+      extrinsics_config_path_(std::move(extrinsics_config_path)),
       robot_calibration_config_path_(std::move(robot_calibration_config_path)),
-      processor_(processor),
-      cubeeye_(cubeeye)
+      processor_(processor)
 {}
 
 HttpApiServer::~HttpApiServer()
@@ -210,39 +125,16 @@ bool HttpApiServer::start()
             },
         });
 
-    server_->add_route("/api/cubeeye/properties", [this](const catcheye::http::HttpRequest& request) {
+    server_->add_route("/api/camera/intrinsics", [this](const catcheye::http::HttpRequest& request) {
         if (request.method == "GET") {
-            return handle_get_cubeeye_properties();
+            return handle_get_intrinsics();
         }
         return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
     });
 
-    constexpr std::string_view property_prefix = "/api/cubeeye/properties/";
-    constexpr std::size_t property_prefix_size = property_prefix.size();
-    server_->add_prefix_route(std::string(property_prefix), [this, property_prefix_size](const catcheye::http::HttpRequest& request) {
-        const std::string key = request.path.substr(property_prefix_size);
-        if (request.method == "PUT") {
-            return handle_put_cubeeye_property(key, request.body);
-        }
-        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
-    });
-
-    server_->add_route("/api/rgb-cubeeye-offset", [this](const catcheye::http::HttpRequest& request) {
+    server_->add_route("/api/camera/extrinsics", [this](const catcheye::http::HttpRequest& request) {
         if (request.method == "GET") {
-            return handle_get_rgb_cubeeye_offset();
-        }
-        if (request.method == "PUT") {
-            return handle_put_rgb_cubeeye_offset(request.body);
-        }
-        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
-    });
-
-    server_->add_route("/api/pointcloud-roi", [this](const catcheye::http::HttpRequest& request) {
-        if (request.method == "GET") {
-            return handle_get_pointcloud_roi_config();
-        }
-        if (request.method == "PUT") {
-            return handle_put_pointcloud_roi_config(request.body);
+            return handle_get_extrinsics();
         }
         return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
     });
@@ -273,115 +165,22 @@ void HttpApiServer::stop()
     }
 }
 
-catcheye::http::HttpResponse HttpApiServer::handle_get_cubeeye_properties() const
+catcheye::http::HttpResponse HttpApiServer::handle_get_intrinsics() const
 {
-    if (cubeeye_ == nullptr) {
-        return {409, "Conflict", catcheye::http::json_error_body("CubeEye is not enabled")};
-    }
     try {
-        const auto properties = cubeeye_->properties_json();
-        if (!properties.has_value()) {
-            return {409, "Conflict", catcheye::http::json_error_body("CubeEye is not running")};
-        }
-        return {200, "OK", *properties};
+        return {200, "OK", read_json_file(intrinsics_config_path_)};
     } catch (const std::exception& e) {
         return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
     }
 }
 
-catcheye::http::HttpResponse HttpApiServer::handle_put_cubeeye_property(const std::string& key, const std::string& body) const
-{
-    if (cubeeye_ == nullptr) {
-        return {409, "Conflict", catcheye::http::json_error_body("CubeEye is not enabled")};
-    }
-    if (!is_supported_cubeeye_property(key)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("unsupported CubeEye property")};
-    }
-
-    JsonValue value;
-    if (!parse_value_body(body, value)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("invalid property JSON body")};
-    }
-
-    bool updated = false;
-    if (is_bool_cubeeye_property(key)) {
-        if (value.type != JsonValue::Type::Boolean) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value must be boolean")};
-        }
-        updated = cubeeye_->set_bool_property(key, value.bool_value);
-    } else if (is_float_cubeeye_property(key)) {
-        if (value.type != JsonValue::Type::Float && value.type != JsonValue::Type::Integer) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value must be number")};
-        }
-        updated = cubeeye_->set_float_property(key, value.type == JsonValue::Type::Float ? value.float_value : static_cast<float>(value.int_value));
-    } else {
-        if (value.type != JsonValue::Type::Integer) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value must be integer")};
-        }
-        if (!valid_int_value(key, value.int_value)) {
-            return {400, "Bad Request", catcheye::http::json_error_body("property value out of range")};
-        }
-        updated = cubeeye_->set_int_property(key, value.int_value);
-    }
-
-    if (!updated) {
-        return {500, "Internal Server Error", catcheye::http::json_error_body("failed to set CubeEye property")};
-    }
-    return handle_get_cubeeye_properties();
-}
-
-catcheye::http::HttpResponse HttpApiServer::handle_get_rgb_cubeeye_offset() const
+catcheye::http::HttpResponse HttpApiServer::handle_get_extrinsics() const
 {
     try {
-        return {200, "OK", rgb_cubeeye_offset_to_json(load_rgb_cubeeye_offset_config(rgb_cubeeye_offset_config_path_))};
+        return {200, "OK", read_json_file(extrinsics_config_path_)};
     } catch (const std::exception& e) {
         return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
     }
-}
-
-catcheye::http::HttpResponse HttpApiServer::handle_put_rgb_cubeeye_offset(const std::string& body) const
-{
-    RgbCubeEyeOffset offset;
-    if (!parse_float_field(body, "u", offset.u) || !parse_float_field(body, "v", offset.v)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("invalid RGB CubeEye offset JSON body")};
-    }
-    if (!is_valid_rgb_cubeeye_offset(offset)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("RGB CubeEye offset out of range")};
-    }
-    if (!save_rgb_cubeeye_offset_config(offset, rgb_cubeeye_offset_config_path_)) {
-        return {500, "Internal Server Error", catcheye::http::json_error_body("failed to save RGB CubeEye offset config file")};
-    }
-    processor_->update_rgb_cubeeye_offset(offset);
-    return handle_get_rgb_cubeeye_offset();
-}
-
-catcheye::http::HttpResponse HttpApiServer::handle_get_pointcloud_roi_config() const
-{
-    try {
-        return {200, "OK", pointcloud_roi_config_to_json(load_pointcloud_roi_config(pointcloud_roi_config_path_))};
-    } catch (const std::exception& e) {
-        return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
-    }
-}
-
-catcheye::http::HttpResponse HttpApiServer::handle_put_pointcloud_roi_config(const std::string& body) const
-{
-    PointCloudRoiConfig config;
-    if (!parse_json_bool_field(body, "enabled", config.enabled) || !parse_json_bool_field(body, "apply_to_viewer", config.apply_to_viewer) ||
-        !parse_float_field(body, "min_x_m", config.min_x_m) ||
-        !parse_float_field(body, "max_x_m", config.max_x_m) || !parse_float_field(body, "min_y_m", config.min_y_m) ||
-        !parse_float_field(body, "max_y_m", config.max_y_m) || !parse_float_field(body, "min_z_m", config.min_z_m) ||
-        !parse_float_field(body, "max_z_m", config.max_z_m)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("invalid pointcloud ROI JSON body")};
-    }
-    if (!is_valid_pointcloud_roi_config(config)) {
-        return {400, "Bad Request", catcheye::http::json_error_body("pointcloud ROI out of range")};
-    }
-    if (!save_pointcloud_roi_config(config, pointcloud_roi_config_path_)) {
-        return {500, "Internal Server Error", catcheye::http::json_error_body("failed to save pointcloud ROI config file")};
-    }
-    processor_->update_pointcloud_roi_config(config);
-    return handle_get_pointcloud_roi_config();
 }
 
 catcheye::http::HttpResponse HttpApiServer::handle_get_robot_calibration() const

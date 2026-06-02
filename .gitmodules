@@ -2,3 +2,6 @@
 	path = third_party/catcheye-vision-sdk
 	url = git@github.com:itschurry/catcheye-vision-sdk.git
 	branch = develop
+[submodule "third_party/librealsense"]
+	path = third_party/librealsense
+	url = https://github.com/IntelRealSense/librealsense.git

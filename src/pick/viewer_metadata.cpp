@@ -57,8 +57,8 @@ void append_detection_fields(std::ostringstream& oss, const PickDetectionFrame& 
         if (detection.position.has_value()) {
             const auto& position = *detection.position;
             oss << "{\"x\":" << position.x << ",\"y\":" << position.y << ",\"z\":" << position.z
-                << ",\"sample_count\":" << position.sample_count << ",\"pointcloud_x\":" << position.pointcloud_x
-                << ",\"pointcloud_y\":" << position.pointcloud_y << ",\"bbox3d\":{\"min_x\":" << position.min_x
+                << ",\"sample_count\":" << position.sample_count << ",\"sample_x\":" << position.sample_x
+                << ",\"sample_y\":" << position.sample_y << ",\"bbox3d\":{\"min_x\":" << position.min_x
                 << ",\"min_y\":" << position.min_y << ",\"min_z\":" << position.min_z << ",\"max_x\":" << position.max_x
                 << ",\"max_y\":" << position.max_y << ",\"max_z\":" << position.max_z << "}}";
         } else {

@@ -10,7 +10,6 @@ services:
     privileged: true
     environment:
       - BUILD_TYPE=develop
-      - LD_LIBRARY_PATH=/home/user/catcheye-pick/third_party/CubeEye2.0-sdk/lib
     volumes:
       - ../:/home/user/catcheye-pick:rw
       - /dev:/dev

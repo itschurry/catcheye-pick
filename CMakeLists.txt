@@ -35,41 +35,6 @@ if(NOT EXISTS "${CATCHEYE_VISION_SDK_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "catcheye-vision-sdk repo not found at ${CATCHEYE_VISION_SDK_SOURCE_DIR}")
 endif()
 
-set(CUBEEYE_SDK_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CubeEye2.0-sdk")
-set(CUBEEYE_INCLUDE_DIR "${CUBEEYE_SDK_SOURCE_DIR}/include")
-set(CUBEEYE_LIBRARY "${CUBEEYE_SDK_SOURCE_DIR}/lib/libCubeEye.so")
-set(CUBEEYE_RUNTIME_LIBRARY_DIRS
-    "${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/libffmpeg/lib"
-    "${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/liblive555/lib/Release"
-    "${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/libusb/lib"
-)
-if(NOT EXISTS "${CUBEEYE_INCLUDE_DIR}/CubeEye/CubeEyeCamera.h")
-    message(FATAL_ERROR "CubeEye SDK headers not found at ${CUBEEYE_INCLUDE_DIR}")
-endif()
-if(NOT EXISTS "${CUBEEYE_LIBRARY}")
-    message(FATAL_ERROR "CubeEye runtime library not found at ${CUBEEYE_LIBRARY}")
-endif()
-
-set(CUBEEYE_RUNTIME_LIBRARIES "${CUBEEYE_LIBRARY}")
-set(CUBEEYE_LINK_LIBRARIES)
-foreach(cubeeye_runtime_library_dir IN LISTS CUBEEYE_RUNTIME_LIBRARY_DIRS)
-    if(EXISTS "${cubeeye_runtime_library_dir}")
-        file(GLOB cubeeye_runtime_libraries
-            "${cubeeye_runtime_library_dir}/*.so"
-            "${cubeeye_runtime_library_dir}/*.so.*"
-        )
-        list(APPEND CUBEEYE_RUNTIME_LIBRARIES ${cubeeye_runtime_libraries})
-
-        file(GLOB cubeeye_link_libraries
-            "${cubeeye_runtime_library_dir}/*.so"
-            "${cubeeye_runtime_library_dir}/*.so.[0-9]*"
-        )
-        list(APPEND CUBEEYE_LINK_LIBRARIES ${cubeeye_link_libraries})
-    endif()
-endforeach()
-list(REMOVE_DUPLICATES CUBEEYE_RUNTIME_LIBRARIES)
-list(REMOVE_DUPLICATES CUBEEYE_LINK_LIBRARIES)
-
 set(CATCHEYE_VISION_SDK_BUILD_TESTS OFF CACHE BOOL "Build tests for SDK libraries" FORCE)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
@@ -80,15 +45,6 @@ add_subdirectory(
     "${CATCHEYE_VISION_SDK_SOURCE_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}/catcheye-vision-sdk"
 )
-
-add_library(cubeeye_sdk SHARED IMPORTED GLOBAL)
-set_target_properties(cubeeye_sdk PROPERTIES
-    IMPORTED_LOCATION "${CUBEEYE_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${CUBEEYE_INCLUDE_DIR}/CubeEye"
-    INTERFACE_LINK_LIBRARIES "${CUBEEYE_LINK_LIBRARIES}"
-    INTERFACE_LINK_OPTIONS "$<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,-rpath-link,${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/libffmpeg/lib;-Wl,-rpath-link,${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/liblive555/lib/Release;-Wl,-rpath-link,${CUBEEYE_SDK_SOURCE_DIR}/thirdparty/libusb/lib>"
-)
-add_library(cubeeye::sdk ALIAS cubeeye_sdk)
 
 file(GLOB_RECURSE CATCHEYE_PICK_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
@@ -106,7 +62,6 @@ target_include_directories(catcheye_pick
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        "${CUBEEYE_INCLUDE_DIR}/CubeEye"
 )
 
 target_compile_features(catcheye_pick PUBLIC cxx_std_20)
@@ -126,7 +81,6 @@ target_link_libraries(catcheye_pick
         catcheye::vision_transport
         catcheye::vision_visualization
         catcheye::vision_http
-        cubeeye::sdk
         ${OpenCV_LIBS}
         spdlog::spdlog
 )
@@ -141,7 +95,6 @@ if(CATCHEYE_PICK_BUILD_APP)
     target_link_libraries(catcheye-pick
         PRIVATE
             catcheye::pick
-            cubeeye::sdk
     )
 
     target_include_directories(catcheye-pick
@@ -162,7 +115,7 @@ if(CATCHEYE_PICK_BUILD_TESTS)
 
     if(CATCHEYE_PICK_TEST_SOURCES)
         add_executable(catcheye_pick_tests ${CATCHEYE_PICK_TEST_SOURCES})
-        target_link_libraries(catcheye_pick_tests PRIVATE catcheye::pick cubeeye::sdk)
+        target_link_libraries(catcheye_pick_tests PRIVATE catcheye::pick)
         target_include_directories(catcheye_pick_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         add_test(NAME catcheye_pick_tests COMMAND catcheye_pick_tests)
     endif()
@@ -255,11 +208,6 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-install(DIRECTORY "${CUBEEYE_INCLUDE_DIR}/CubeEye"
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.h"
-)
-
 install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-input/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
@@ -300,20 +248,14 @@ install(DIRECTORY config
 install(PROGRAMS
     scripts/run-all-hailo.sh
     scripts/run-all.sh
-    scripts/run-pcl.sh
     scripts/run-rgb-hailo.sh
     scripts/run-rgb-ncnn.sh
-    scripts/run-rgb-pcl.sh
     scripts/run-rgb.sh
     scripts/run-d455-sim.sh
     DESTINATION scripts
 )
 
 if(CATCHEYE_PICK_BUNDLE_RUNTIME_LIBS)
-    install(FILES ${CUBEEYE_RUNTIME_LIBRARIES}
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    )
-
     set(CATCHEYE_NCNN_LIBRARY_DIRS)
     if(CMAKE_LIBRARY_ARCHITECTURE)
         list(APPEND CATCHEYE_NCNN_LIBRARY_DIRS

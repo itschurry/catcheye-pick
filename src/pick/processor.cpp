@@ -7,25 +7,10 @@
 
 #include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/roi/roi_validation.hpp"
-#include "pick/object_position_estimator.hpp"
 #include "pick/viewer_payload_builder.hpp"
 
 namespace catcheye::pick {
 namespace {
-
-const CubeEyeFrameEntry* find_pointcloud_frame(const CubeEyeFrameSet& frame_set)
-{
-    const auto it = std::find_if(frame_set.frames.begin(), frame_set.frames.end(),
-                                 [](const CubeEyeFrameEntry& entry) { return entry.spec.type == meere::sensor::FrameType::PointCloud; });
-    return it == frame_set.frames.end() ? nullptr : &*it;
-}
-
-const CubeEyeFrameEntry* find_depth_frame(const CubeEyeFrameSet& frame_set)
-{
-    const auto it = std::find_if(frame_set.frames.begin(), frame_set.frames.end(),
-                                 [](const CubeEyeFrameEntry& entry) { return entry.spec.type == meere::sensor::FrameType::Depth; });
-    return it == frame_set.frames.end() ? nullptr : &*it;
-}
 
 RobotPoint transform_pick_point(const RobotTransformConfig& transform, const PickCandidate& candidate)
 {
@@ -154,47 +139,10 @@ bool PickProcessor::update_pallet_roi_config(const catcheye::roi::CameraRoiConfi
     return true;
 }
 
-RgbCubeEyeOffset PickProcessor::rgb_cubeeye_offset() const
-{
-    std::lock_guard<std::mutex> lock(roi_mutex_);
-    return config_.rgb_cubeeye_offset;
-}
-
-PointCloudRoiConfig PickProcessor::pointcloud_roi_config() const
-{
-    std::lock_guard<std::mutex> lock(roi_mutex_);
-    return config_.pointcloud_roi_config;
-}
-
 RobotCalibrationConfig PickProcessor::robot_calibration() const
 {
     std::lock_guard<std::mutex> lock(roi_mutex_);
     return config_.robot_calibration;
-}
-
-bool PickProcessor::update_rgb_cubeeye_offset(RgbCubeEyeOffset offset)
-{
-    if (!std::isfinite(offset.u) || !std::isfinite(offset.v) || offset.u < -1.0F || offset.u > 1.0F || offset.v < -1.0F ||
-        offset.v > 1.0F) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(roi_mutex_);
-    config_.rgb_cubeeye_offset = offset;
-    return true;
-}
-
-bool PickProcessor::update_pointcloud_roi_config(PointCloudRoiConfig config)
-{
-    if (!std::isfinite(config.min_x_m) || !std::isfinite(config.max_x_m) || !std::isfinite(config.min_y_m) ||
-        !std::isfinite(config.max_y_m) || !std::isfinite(config.min_z_m) || !std::isfinite(config.max_z_m) ||
-        config.max_x_m <= config.min_x_m || config.max_y_m <= config.min_y_m || config.max_z_m <= config.min_z_m) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(roi_mutex_);
-    config_.pointcloud_roi_config = config;
-    return true;
 }
 
 bool PickProcessor::update_robot_calibration(RobotCalibrationConfig config)
@@ -233,25 +181,17 @@ PickDetectionFrame PickProcessor::process_detection_frame(const RgbdFrame& frame
     output.frame_index = frame.frame_index;
     const catcheye::input::Frame& color_frame = *frame.color;
     const std::vector<catcheye::Detection> detections = detector_->detect(color_frame);
-    const CubeEyeFrameEntry* pointcloud_frame = find_pointcloud_frame(frame.depth);
-    const CubeEyeFrameEntry* depth_frame = find_depth_frame(frame.depth);
-    const CubeEyeFrameEntry* position_frame = pointcloud_frame != nullptr ? pointcloud_frame : depth_frame;
-    const RgbCubeEyeOffset rgb_cubeeye_offset = this->rgb_cubeeye_offset();
     const RobotCalibrationConfig robot_calibration = this->robot_calibration();
     output.detections.reserve(detections.size());
     output.pick_candidates.reserve(detections.size());
     int candidate_id = 1;
     for (const auto& detection : detections) {
-        std::optional<PickDetectionResult::ObjectPosition> position;
-        if (position_frame != nullptr) {
-            position = estimate_object_position(detection.box, color_frame, *position_frame, frame.depth.intrinsics, rgb_cubeeye_offset);
-        }
         output.detections.push_back(PickDetectionResult{
             .class_id = detection.class_id,
             .class_name = detector_->class_name(detection.class_id),
             .score = detection.score,
             .box = detection.box,
-            .position = position,
+            .position = std::nullopt,
         });
         if (const auto candidate = build_pick_candidate(candidate_id, output.detections.back(), robot_calibration)) {
             output.pick_candidates.push_back(*candidate);
@@ -271,13 +211,12 @@ PickViewerFrame PickProcessor::process_viewer_frame(const RgbdFrame& frame) cons
     output.roi_config = roi.config;
     output.pallet_roi_enabled = pallet_roi.enabled;
     output.pallet_roi_config = pallet_roi.config;
-    output.payloads.reserve(1U + frame.depth.frames.size());
+    output.payloads.reserve(1U);
     if (frame.color.has_value()) {
         output.payloads.push_back(camera_payload(*frame.color));
     }
-    const PointCloudRoiConfig pointcloud_roi = pointcloud_roi_config();
-    for (const auto& depth_frame : frame.depth.frames) {
-        output.payloads.push_back(cubeeye_payload(depth_frame, config_.pointcloud_downsample, pointcloud_roi));
+    if (frame.depth_visual.has_value()) {
+        output.payloads.push_back(depth_payload(*frame.depth_visual));
     }
     return output;
 }

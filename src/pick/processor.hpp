@@ -10,7 +10,6 @@
 #include "catcheye/detection/detector.hpp"
 #include "catcheye/input/frame.hpp"
 #include "catcheye/roi/camera_roi_config.hpp"
-#include "pick/cubeeye_camera.hpp"
 #include "pick/processor_config.hpp"
 #include "pick/rgbd_frame.hpp"
 
@@ -76,8 +75,8 @@ struct PickDetectionResult {
         float y = 0.0F;
         float z = 0.0F;
         int sample_count = 0;
-        int pointcloud_x = 0;
-        int pointcloud_y = 0;
+        int sample_x = 0;
+        int sample_y = 0;
         float min_x = 0.0F;
         float min_y = 0.0F;
         float min_z = 0.0F;
@@ -101,13 +100,9 @@ class PickProcessor final {
     bool initialize();
     PickDetectionFrame process_detection_frame(const RgbdFrame& frame);
     PickViewerFrame process_viewer_frame(const RgbdFrame& frame) const;
-    RgbCubeEyeOffset rgb_cubeeye_offset() const;
-    PointCloudRoiConfig pointcloud_roi_config() const;
     RobotCalibrationConfig robot_calibration() const;
     bool update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
-    bool update_rgb_cubeeye_offset(RgbCubeEyeOffset offset);
-    bool update_pointcloud_roi_config(PointCloudRoiConfig config);
     bool update_robot_calibration(RobotCalibrationConfig config);
 
   private:
