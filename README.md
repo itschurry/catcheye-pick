@@ -19,6 +19,10 @@ docker compose -f docker/docker-compose.dev.yml run --rm catcheye-pick-dev
 ./scripts/cmake.sh build
 ```
 
+`build/release/compile_commands.json`은 컨테이너 경로 기준이다.
+`build/compile_commands.json`은 macOS 호스트 경로 기준으로 변환된 파일이다.
+프로젝트 루트에는 `compile_commands.json`을 만들지 않는다.
+
 ## 실행
 
 실행 옵션 도움말:
