@@ -10,6 +10,7 @@ ISAACSIM_PORT=8080
 exec "$CATCHEYE_PICK_PATH/bin/catcheye-pick" \
   --ws \
   --viewer-only \
-  --camera-input rgb \
+  --input-source camera \
+  --camera-backend isaacsim \
   --camera-pipeline "souphttpsrc location=http://$ISAACSIM_HOST:$ISAACSIM_PORT/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720" \
   --depth-pipeline "souphttpsrc location=http://$ISAACSIM_HOST:$ISAACSIM_PORT/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"

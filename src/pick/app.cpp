@@ -25,8 +25,6 @@
 namespace catcheye::pick {
 namespace {
 
-constexpr std::string_view DEFAULT_CAMERA_PIPELINE =
-    "libcamerasrc ! video/x-raw,width=1920,height=1080,framerate=10/1,format=NV12 ! videoflip method=rotate-180";
 constexpr int CAMERA_READ_SLEEP_MS = 1;
 
 void print_usage()
@@ -39,12 +37,13 @@ void print_usage()
               << "  --hef <path>              Hailo HEF model path\n"
               << "  --metadata <path>         Detector metadata YAML path\n"
               << "  --num-threads <count>     NCNN inference threads (default: 2)\n"
-              << "  --camera-input <mode>     Camera input: rgb\n"
+              << "  --input-source <kind>     Input source: camera | image | video\n"
+              << "  --camera-backend <name>   Camera backend: realsense | isaacsim\n"
               << "  --viewer-only             Start camera input without detection\n"
               << "  --ws [port]               Publish frames over WebSocket\n"
               << "  --http-port <port>        HTTP API port (default: 8090)\n"
-              << "  --camera-pipeline <pipe>  GStreamer RGB camera pipeline\n"
-              << "  --depth-pipeline <pipe>   GStreamer depth visualization pipeline\n"
+              << "  --camera-pipeline <pipe>  Isaac Sim color GStreamer pipeline\n"
+              << "  --depth-pipeline <pipe>   Isaac Sim depth visualization pipeline\n"
               << "  --roi <path>              Person ROI config path\n"
               << "  --pallet-roi <path>       Pallet ROI config path\n"
               << "  --intrinsics <path>       Camera intrinsics JSON path\n"
@@ -63,12 +62,53 @@ catcheye::DetectorBackend parse_detector_backend(std::string_view value)
     throw std::invalid_argument("unknown detector backend: " + std::string(value));
 }
 
-RgbdSourceProfile parse_source_profile(std::string_view value)
+InputSourceKind parse_input_source(std::string_view value)
 {
-    if (value == "rgb") {
-        return RgbdSourceProfile::RgbOnly;
+    if (value == "camera") {
+        return InputSourceKind::Camera;
     }
-    throw std::invalid_argument("unknown camera input mode: " + std::string(value));
+    if (value == "image") {
+        return InputSourceKind::Image;
+    }
+    if (value == "video") {
+        return InputSourceKind::Video;
+    }
+    throw std::invalid_argument("unknown input source: " + std::string(value));
+}
+
+CameraBackend parse_camera_backend(std::string_view value)
+{
+    if (value == "realsense") {
+        return CameraBackend::Realsense;
+    }
+    if (value == "isaacsim") {
+        return CameraBackend::IsaacSim;
+    }
+    throw std::invalid_argument("unknown camera backend: " + std::string(value));
+}
+
+const char* input_source_name(InputSourceKind kind)
+{
+    switch (kind) {
+    case InputSourceKind::Camera:
+        return "camera";
+    case InputSourceKind::Image:
+        return "image";
+    case InputSourceKind::Video:
+        return "video";
+    }
+    return "unknown";
+}
+
+const char* camera_backend_name(CameraBackend backend)
+{
+    switch (backend) {
+    case CameraBackend::Realsense:
+        return "realsense";
+    case CameraBackend::IsaacSim:
+        return "isaacsim";
+    }
+    return "unknown";
 }
 
 const char* publisher_name(PublisherType type)
@@ -124,7 +164,8 @@ std::string describe_runtime_mode(const AppOptions& options)
 {
     const char* processing_name = options.viewer_only ? "viewer only" : "pick detection";
     const char* output_name = options.publisher_type == PublisherType::WebSocket ? "websocket output" : "local output";
-    return std::string("RGB camera + ") + processing_name + " + " + output_name;
+    return std::string(input_source_name(options.input_source)) + "/" + camera_backend_name(options.camera_backend) + " + " +
+        processing_name + " + " + output_name;
 }
 
 void start_http_api(AppBootstrap& bootstrap, PickProcessor& processor, std::optional<HttpApiServer>& http_api_server)
@@ -297,11 +338,16 @@ AppOptions parse_app_options(int argc, char** argv)
             options.show_help = true;
         } else if (arg == "--viewer-only") {
             options.viewer_only = true;
-        } else if (arg == "--camera-input") {
+        } else if (arg == "--input-source") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--camera-input requires a value");
+                throw std::invalid_argument("--input-source requires a value");
             }
-            options.source_profile = parse_source_profile(argv[++i]);
+            options.input_source = parse_input_source(argv[++i]);
+        } else if (arg == "--camera-backend") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--camera-backend requires a value");
+            }
+            options.camera_backend = parse_camera_backend(argv[++i]);
         } else if (arg == "--ws") {
             if (options.publisher_type != PublisherType::None) {
                 throw std::invalid_argument("only one publisher can be selected at a time");
@@ -372,11 +418,16 @@ AppOptions parse_app_options(int argc, char** argv)
             options.num_threads = std::stoi(argv[++i]);
         } else if (arg == "--rtsp") {
             throw std::invalid_argument("--rtsp is not supported by catcheye-pick");
+        } else if (!arg.empty() && arg.front() == '-') {
+            throw std::invalid_argument("unknown option: " + std::string(arg));
         } else {
             options.positional_args.emplace_back(arg);
         }
     }
 
+    if (options.show_help) {
+        return options;
+    }
     if (options.websocket_port <= 0) {
         throw std::invalid_argument("WebSocket port must be a positive integer");
     }
@@ -394,6 +445,18 @@ AppOptions parse_app_options(int argc, char** argv)
     }
     if (options.viewer_only && (!options.hef_path.empty() || !options.metadata_path.empty())) {
         throw std::invalid_argument("model and metadata arguments are not used with --viewer-only");
+    }
+    if (options.input_source != InputSourceKind::Camera) {
+        throw std::invalid_argument("--input-source image/video is not implemented yet");
+    }
+    if (options.camera_backend != CameraBackend::IsaacSim && (!options.camera_pipeline.empty() || !options.depth_pipeline.empty())) {
+        throw std::invalid_argument("--camera-pipeline and --depth-pipeline are only used with --camera-backend isaacsim");
+    }
+    if (options.camera_backend != CameraBackend::IsaacSim) {
+        throw std::invalid_argument("--camera-backend realsense is not implemented yet");
+    }
+    if (options.camera_pipeline.empty()) {
+        throw std::invalid_argument("--camera-backend isaacsim requires --camera-pipeline");
     }
 
     return options;
@@ -457,11 +520,10 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     bootstrap.websocket_publisher_config.port = options.websocket_port;
     bootstrap.http_api_server_config.port = options.http_port;
 
-    const std::string camera_pipeline = options.camera_pipeline.empty() ? std::string(DEFAULT_CAMERA_PIPELINE) : options.camera_pipeline;
     bootstrap.camera_source = catcheye::input::create_frame_source(catcheye::input::InputSourceConfig{
         .type = catcheye::input::InputSourceType::Camera,
         .uri = {},
-        .camera_pipeline = camera_pipeline,
+        .camera_pipeline = options.camera_pipeline,
         .camera_device = {},
         .camera_width = 1280,
         .camera_height = 720,

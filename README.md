@@ -27,7 +27,7 @@ Isaac Sim D455 영상 수신 후 WebSocket 송출:
 ./scripts/run-d455-sim.sh
 ```
 
-로컬 RGB 카메라 viewer-only:
+기존 GStreamer RGB viewer-only:
 
 ```bash
 ./scripts/run-rgb.sh
@@ -51,7 +51,8 @@ Hailo detection + WebSocket:
 ./bin/catcheye-pick \
   --ws 8080 \
   --viewer-only \
-  --camera-input rgb \
+  --input-source camera \
+  --camera-backend isaacsim \
   --camera-pipeline "souphttpsrc location=http://210.120.123.164:8080/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720" \
   --depth-pipeline "souphttpsrc location=http://210.120.123.164:8080/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
 ```
@@ -60,9 +61,10 @@ Hailo detection + WebSocket:
 
 | 옵션 | 설명 |
 | --- | --- |
-| `--camera-input rgb` | RGB 영상 입력만 사용 |
-| `--camera-pipeline <pipe>` | GStreamer 입력 파이프라인 |
-| `--depth-pipeline <pipe>` | GStreamer depth MJPEG 입력 파이프라인 |
+| `--input-source camera\|image\|video` | 입력 형태, 현재 실행 구현은 `camera`만 있음 |
+| `--camera-backend realsense\|isaacsim` | 카메라 수신 방식, 현재 실행 구현은 `isaacsim`만 있음 |
+| `--camera-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 필수 color GStreamer 입력 |
+| `--depth-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 depth MJPEG 입력 |
 | `--viewer-only` | detection 없이 영상만 송출 |
 | `--ws [port]` | WebSocket 송출 활성화, 기본 `8080` |
 | `--http-port <port>` | HTTP API 포트, 기본 `8090` |

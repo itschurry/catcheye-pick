@@ -17,8 +17,15 @@ enum class PublisherType {
     WebSocket,
 };
 
-enum class RgbdSourceProfile {
-    RgbOnly,
+enum class InputSourceKind {
+    Camera,
+    Image,
+    Video,
+};
+
+enum class CameraBackend {
+    Realsense,
+    IsaacSim,
 };
 
 struct AppOptions {
@@ -27,7 +34,8 @@ struct AppOptions {
     PublisherType publisher_type = PublisherType::None;
     int websocket_port = 8080;
     int http_port = 8090;
-    RgbdSourceProfile source_profile = RgbdSourceProfile::RgbOnly;
+    InputSourceKind input_source = InputSourceKind::Camera;
+    CameraBackend camera_backend = CameraBackend::IsaacSim;
     std::string camera_pipeline;
     std::string depth_pipeline;
     std::string roi_config_path;
