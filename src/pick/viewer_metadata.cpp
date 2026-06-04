@@ -74,6 +74,50 @@ void append_robot_point(std::ostringstream& oss, const RobotPoint& point)
     oss << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"z\":" << point.z << "}";
 }
 
+void append_pose_camera(std::ostringstream& oss, const PoseCamera& pose)
+{
+    oss << "{\"translation_m\":[" << pose.translation_m.x << ',' << pose.translation_m.y << ',' << pose.translation_m.z
+        << "],\"rotation_quat_xyzw\":[" << pose.rotation_quat_xyzw[0] << ',' << pose.rotation_quat_xyzw[1] << ','
+        << pose.rotation_quat_xyzw[2] << ',' << pose.rotation_quat_xyzw[3] << "]}";
+}
+
+void append_robot_fields(std::ostringstream& oss, const std::optional<RobotPoint>& r1, const std::optional<RobotPoint>& r2)
+{
+    if (r1.has_value() && r2.has_value()) {
+        oss << "{\"r1\":";
+        append_robot_point(oss, *r1);
+        oss << ",\"r2\":";
+        append_robot_point(oss, *r2);
+        oss << "}";
+    } else {
+        oss << "null";
+    }
+}
+
+void append_pose_estimate_fields(std::ostringstream& oss, const PickDetectionFrame* frame)
+{
+    if (frame == nullptr) {
+        oss << "\"pose_estimate_count\":0,\"pose_estimates\":[]";
+        return;
+    }
+
+    oss << "\"pose_estimate_count\":" << frame->pose_estimates.size() << ",\"pose_estimates\":[";
+    for (std::size_t i = 0; i < frame->pose_estimates.size(); ++i) {
+        const auto& estimate = frame->pose_estimates[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"object_id\":\"" << escape_json(estimate.object_id) << "\",\"product_id\":\""
+            << escape_json(estimate.product_id) << "\",\"confidence\":" << estimate.confidence << ",\"pose_camera\":";
+        append_pose_camera(oss, estimate.pose_camera);
+        oss << ",\"pick_point_camera_m\":[" << estimate.pick_point_camera_m.x << ',' << estimate.pick_point_camera_m.y << ','
+            << estimate.pick_point_camera_m.z << "],\"robot\":";
+        append_robot_fields(oss, estimate.r1, estimate.r2);
+        oss << "}";
+    }
+    oss << "]";
+}
+
 void append_pick_candidate_fields(std::ostringstream& oss, const PickDetectionFrame* frame)
 {
     if (frame == nullptr) {
@@ -87,7 +131,8 @@ void append_pick_candidate_fields(std::ostringstream& oss, const PickDetectionFr
         if (i > 0) {
             oss << ',';
         }
-        oss << "{\"id\":" << candidate.id << ",\"product_id\":\"" << escape_json(candidate.product_id)
+        oss << "{\"id\":" << candidate.id << ",\"object_id\":\"" << escape_json(candidate.object_id)
+            << "\",\"product_id\":\"" << escape_json(candidate.product_id)
             << "\",\"confidence\":" << candidate.confidence << ",\"center_camera_m\":[" << candidate.center_x << ','
             << candidate.center_y << ',' << candidate.center_z << "],\"pose_camera\":{\"translation\":[" << candidate.center_x << ','
             << candidate.center_y << ',' << candidate.center_z << "],\"rotation_rpy_deg\":[" << candidate.roll_deg << ','
@@ -95,15 +140,7 @@ void append_pick_candidate_fields(std::ostringstream& oss, const PickDetectionFr
             << candidate.min_y << ',' << candidate.min_z << ',' << candidate.max_x << ',' << candidate.max_y << ','
             << candidate.max_z << "],\"pick_point_camera_m\":[" << candidate.pick_x << ',' << candidate.pick_y << ','
             << candidate.pick_z << "],\"robot\":";
-        if (candidate.r1.has_value() && candidate.r2.has_value()) {
-            oss << "{\"r1\":";
-            append_robot_point(oss, *candidate.r1);
-            oss << ",\"r2\":";
-            append_robot_point(oss, *candidate.r2);
-            oss << "}";
-        } else {
-            oss << "null";
-        }
+        append_robot_fields(oss, candidate.r1, candidate.r2);
         oss << "}";
     }
     oss << "]";
@@ -125,6 +162,8 @@ std::string build_viewer_metadata(const PickViewerFrame& frame, bool viewer_only
         oss << ',';
     }
     append_pick_candidate_fields(oss, detection_frame);
+    oss << ',';
+    append_pose_estimate_fields(oss, detection_frame);
     oss << ',';
     oss << "\"streams\":[";
     for (std::size_t i = 0; i < frame.payloads.size(); ++i) {
@@ -151,6 +190,8 @@ std::string build_detection_metadata(const PickDetectionFrame& frame)
     append_detection_fields(oss, frame);
     oss << ',';
     append_pick_candidate_fields(oss, &frame);
+    oss << ',';
+    append_pose_estimate_fields(oss, &frame);
     oss << "}";
     return oss.str();
 }

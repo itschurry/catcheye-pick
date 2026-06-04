@@ -3,6 +3,7 @@
 #include <chrono>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -18,6 +19,7 @@
 #include "catcheye/roi/roi_validation.hpp"
 #include "catcheye/transport/websocket_publisher.hpp"
 #include "catcheye/visualization/annotation_renderer.hpp"
+#include "pick/config_json.hpp"
 #include "pick/http_api_server.hpp"
 #include "pick/processor.hpp"
 #include "pick/robot_calibration_repository.hpp"
@@ -39,6 +41,8 @@ void print_usage()
               << "  --camera-backend <name>     Camera backend: isaacsim | realsense (default: isaacsim; realsense not implemented)\n"
               << "  --camera-pipeline <pipe>    Isaac Sim color GStreamer pipeline; required for isaacsim\n"
               << "  --depth-pipeline <pipe>     Isaac Sim depth visualization GStreamer pipeline\n"
+              << "  --depth-max-m <meters>      Max metric depth represented by depth frame brightness; required for detection with depth\n"
+              << "  --depth-min-m <meters>      Min valid metric depth (default: 0.05)\n"
               << "  --viewer-only               Disable detection; requires --ws\n"
               << "  --ws [port]                 Publish frames over WebSocket (default port: 8080)\n"
               << "  --http-port <port>          HTTP API port (default: 8090)\n"
@@ -50,11 +54,12 @@ void print_usage()
               << "  --intrinsics <path>         Camera intrinsics JSON path (default: config/intrinsics.json)\n"
               << "  --extrinsics <path>         Camera extrinsics JSON path (default: config/extrinsics.json)\n"
               << "  --robot-calibration <path>  Robot calibration config path (default: config/robot_calibration.json)\n"
+              << "  --objects <path>            Object catalog JSON path (default: config/objects.json)\n"
               << "\n"
               << "Examples:\n"
               << "  catcheye-pick --help\n"
               << "  catcheye-pick --ws --viewer-only --camera-pipeline \"<gst-color-pipeline>\"\n"
-              << "  catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline \"<gst-color-pipeline>\"\n";
+              << "  catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline \"<gst-color-pipeline>\" --depth-pipeline \"<gst-depth-pipeline>\" --depth-max-m 5.0\n";
 }
 
 catcheye::DetectorBackend parse_detector_backend(std::string_view value)
@@ -169,6 +174,96 @@ catcheye::roi::CameraRoiConfig load_roi_config(const std::string& path)
     return parse_result.config;
 }
 
+CameraIntrinsicsConfig load_camera_intrinsics_config(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file) {
+        throw std::runtime_error("failed to load camera intrinsics config: " + path);
+    }
+    const std::string body((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    CameraIntrinsicsConfig intrinsics;
+    if (!parse_json_int_field(body, "width", intrinsics.width) || !parse_json_int_field(body, "height", intrinsics.height) ||
+        !parse_json_float_field(body, "fx", intrinsics.fx) || !parse_json_float_field(body, "fy", intrinsics.fy) ||
+        !parse_json_float_field(body, "cx", intrinsics.cx) || !parse_json_float_field(body, "cy", intrinsics.cy)) {
+        throw std::runtime_error("camera intrinsics config is missing width/height/fx/fy/cx/cy: " + path);
+    }
+    if (intrinsics.width <= 0 || intrinsics.height <= 0 || intrinsics.fx <= 0.0F || intrinsics.fy <= 0.0F) {
+        throw std::runtime_error("camera intrinsics config has invalid values: " + path);
+    }
+    return intrinsics;
+}
+
+std::vector<std::string_view> json_object_blocks(std::string_view body, std::string_view array_key)
+{
+    const std::string quoted_key = "\"" + std::string(array_key) + "\"";
+    const std::size_t key_pos = body.find(quoted_key);
+    if (key_pos == std::string_view::npos) {
+        return {};
+    }
+    const std::size_t array_open = body.find('[', key_pos + quoted_key.size());
+    if (array_open == std::string_view::npos) {
+        return {};
+    }
+
+    std::vector<std::string_view> blocks;
+    int depth = 0;
+    std::size_t object_start = std::string_view::npos;
+    for (std::size_t i = array_open + 1U; i < body.size(); ++i) {
+        const char ch = body[i];
+        if (ch == '{') {
+            if (depth == 0) {
+                object_start = i;
+            }
+            ++depth;
+        } else if (ch == '}') {
+            --depth;
+            if (depth == 0 && object_start != std::string_view::npos) {
+                blocks.push_back(body.substr(object_start, i - object_start + 1U));
+                object_start = std::string_view::npos;
+            }
+        } else if (ch == ']' && depth == 0) {
+            break;
+        }
+    }
+    return blocks;
+}
+
+std::vector<ProductObjectConfig> load_object_catalog_config(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file) {
+        throw std::runtime_error("failed to load object catalog config: " + path);
+    }
+    const std::string body((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto blocks = json_object_blocks(body, "objects");
+    if (blocks.empty()) {
+        throw std::runtime_error("object catalog has no objects: " + path);
+    }
+
+    std::vector<ProductObjectConfig> objects;
+    objects.reserve(blocks.size());
+    for (const std::string_view block : blocks) {
+        ProductObjectConfig object;
+        if (!parse_json_string_field(block, "product_id", object.product_id) || object.product_id.empty()) {
+            throw std::runtime_error("object catalog entry is missing product_id: " + path);
+        }
+        std::vector<float> pick_point;
+        if (parse_json_float_array_field(block, "pick_point_object_m", pick_point)) {
+            if (pick_point.size() != 3U) {
+                throw std::runtime_error("pick_point_object_m must have 3 values: " + path);
+            }
+            object.pick_point_object_m = ObjectPointConfig{
+                .x = pick_point[0],
+                .y = pick_point[1],
+                .z = pick_point[2],
+            };
+        }
+        objects.push_back(std::move(object));
+    }
+    return objects;
+}
+
 std::string describe_runtime_mode(const AppOptions& options)
 {
     const char* processing_name = options.viewer_only ? "viewer only" : "pick detection";
@@ -186,6 +281,7 @@ void start_http_api(AppBootstrap& bootstrap, PickProcessor& processor, std::opti
         bootstrap.intrinsics_config_path,
         bootstrap.extrinsics_config_path,
         bootstrap.robot_calibration_config_path,
+        bootstrap.object_catalog_config_path,
         &processor);
     if (!http_api_server->start()) {
         throw std::runtime_error("failed to start HTTP API server");
@@ -303,7 +399,7 @@ int run_pick_detection(AppBootstrap bootstrap)
         PickDetectionFrame detection_frame = processor.process_detection_frame(RgbdFrame{
             .frame_index = ++frame_index,
             .color = std::optional<catcheye::input::Frame>{frame},
-            .depth_visual = std::nullopt,
+            .depth_visual = depth_frame,
         });
 
         if (websocket) {
@@ -366,6 +462,10 @@ AppOptions parse_app_options(int argc, char** argv)
             options.camera_pipeline = read_required_value(args, i, arg);
         } else if (arg == "--depth-pipeline") {
             options.depth_pipeline = read_required_value(args, i, arg);
+        } else if (arg == "--depth-max-m") {
+            options.depth_max_m = std::stof(std::string(read_required_value(args, i, arg)));
+        } else if (arg == "--depth-min-m") {
+            options.depth_min_m = std::stof(std::string(read_required_value(args, i, arg)));
         } else if (arg == "--roi") {
             options.roi_config_path = read_required_value(args, i, arg);
         } else if (arg == "--pallet-roi") {
@@ -376,6 +476,8 @@ AppOptions parse_app_options(int argc, char** argv)
             options.extrinsics_config_path = read_required_value(args, i, arg);
         } else if (arg == "--robot-calibration") {
             options.robot_calibration_config_path = read_required_value(args, i, arg);
+        } else if (arg == "--objects") {
+            options.object_catalog_config_path = read_required_value(args, i, arg);
         } else if (arg == "--detector") {
             options.detector_backend = parse_detector_backend(read_required_value(args, i, arg));
         } else if (arg == "--hef") {
@@ -409,6 +511,21 @@ AppOptions parse_app_options(int argc, char** argv)
     }
     if (options.camera_backend != CameraBackend::IsaacSim && (!options.camera_pipeline.empty() || !options.depth_pipeline.empty())) {
         throw std::invalid_argument("--camera-pipeline and --depth-pipeline are only used with --camera-backend isaacsim");
+    }
+    if (options.depth_max_m.has_value() && options.depth_max_m.value() <= 0.0F) {
+        throw std::invalid_argument("--depth-max-m must be greater than zero");
+    }
+    if (options.depth_min_m < 0.0F) {
+        throw std::invalid_argument("--depth-min-m must be zero or greater");
+    }
+    if (options.depth_max_m.has_value() && options.depth_min_m >= options.depth_max_m.value()) {
+        throw std::invalid_argument("--depth-min-m must be less than --depth-max-m");
+    }
+    if (options.depth_max_m.has_value() && options.depth_pipeline.empty()) {
+        throw std::invalid_argument("--depth-max-m requires --depth-pipeline");
+    }
+    if (!options.viewer_only && !options.depth_pipeline.empty() && !options.depth_max_m.has_value()) {
+        throw std::invalid_argument("pick detection with --depth-pipeline requires --depth-max-m");
     }
     if (options.camera_backend != CameraBackend::IsaacSim) {
         throw std::invalid_argument("--camera-backend realsense is not implemented yet");
@@ -453,8 +570,20 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     bootstrap.robot_calibration_config_path = options.robot_calibration_config_path.empty()
         ? resolve_default_config_path(executable_path, "robot_calibration.json")
         : options.robot_calibration_config_path;
+    bootstrap.object_catalog_config_path = options.object_catalog_config_path.empty()
+        ? resolve_default_config_path(executable_path, "objects.json")
+        : options.object_catalog_config_path;
     bootstrap.processor_config.robot_calibration_config_path = bootstrap.robot_calibration_config_path;
     bootstrap.processor_config.robot_calibration = load_robot_calibration_config(bootstrap.robot_calibration_config_path);
+    bootstrap.processor_config.camera_intrinsics = load_camera_intrinsics_config(bootstrap.intrinsics_config_path);
+    bootstrap.processor_config.object_catalog = load_object_catalog_config(bootstrap.object_catalog_config_path);
+    if (options.depth_max_m.has_value()) {
+        bootstrap.processor_config.depth_projection = DepthProjectionConfig{
+            .enabled = true,
+            .min_depth_m = options.depth_min_m,
+            .max_depth_m = options.depth_max_m.value(),
+        };
+    }
 
     bootstrap.publisher_type = options.publisher_type;
     bootstrap.websocket_publisher_config.port = options.websocket_port;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "catcheye/detection/detector_factory.hpp"
@@ -37,11 +38,14 @@ struct AppOptions {
     CameraBackend camera_backend = CameraBackend::IsaacSim;
     std::string camera_pipeline;
     std::string depth_pipeline;
+    std::optional<float> depth_max_m;
+    float depth_min_m = 0.05F;
     std::string roi_config_path;
     std::string pallet_roi_config_path;
     std::string intrinsics_config_path;
     std::string extrinsics_config_path;
     std::string robot_calibration_config_path;
+    std::string object_catalog_config_path;
     catcheye::DetectorBackend detector_backend = catcheye::DetectorBackend::Hailo;
     std::string hef_path;
     std::string metadata_path;
@@ -57,6 +61,7 @@ struct AppBootstrap {
     std::string intrinsics_config_path;
     std::string extrinsics_config_path;
     std::string robot_calibration_config_path;
+    std::string object_catalog_config_path;
 };
 
 AppOptions parse_app_options(int argc, char** argv);

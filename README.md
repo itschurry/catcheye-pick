@@ -1,8 +1,8 @@
 # catcheye-pick
 
-RealSense D455 Isaac Sim 영상 수신용 CatchEye Pick 앱이다.
+RealSense D455 Isaac Sim 영상 수신과 RGB-D 기반 pick 후보 생성을 위한 CatchEye Pick 앱이다.
 
-이 브랜치는 `codex/realsense-d455-sim` 기준이다. Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 받아 WebSocket으로 다시 송출한다.
+이 브랜치는 `codex/realsense-d455-sim` 기준이다. Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 받고, 객체 CAD/USD 카탈로그와 Hailo 검출 bbox, depth frame을 조합해 camera 좌표계의 3D pick 후보를 WebSocket metadata로 송출한다.
 
 ## 설치
 
@@ -37,6 +37,12 @@ Isaac Sim D455 영상 수신 후 WebSocket 송출:
 ./scripts/run-d455-sim.sh
 ```
 
+Isaac Sim D455 RGB-D + Hailo 검출 + 3D pick 후보 송출:
+
+```bash
+./scripts/run-d455-sim-hailo.sh
+```
+
 기존 GStreamer RGB viewer-only:
 
 ```bash
@@ -58,7 +64,8 @@ Hailo detection + WebSocket:
   --input-source camera \
   --camera-backend isaacsim \
   --camera-pipeline "souphttpsrc location=http://210.120.123.164:8080/color.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720" \
-  --depth-pipeline "souphttpsrc location=http://210.120.123.164:8080/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
+  --depth-pipeline "souphttpsrc location=http://210.120.123.164:8080/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720" \
+  --depth-max-m 5.0
 ```
 
 ## 실행 옵션
@@ -75,6 +82,8 @@ Hailo detection + WebSocket:
 - `--camera-backend <isaacsim|realsense>`: 카메라 수신 방식을 지정한다. 현재 실행 구현은 `isaacsim`만 있다.
 - `--camera-pipeline <pipeline>`: `--camera-backend isaacsim`에서 쓰는 color GStreamer 입력이다.
 - `--depth-pipeline <pipeline>`: `--camera-backend isaacsim`에서 쓰는 depth visualization GStreamer 입력이다.
+- `--depth-max-m <meters>`: depth frame 밝기 `255`가 의미하는 최대 거리다. detection에서 `--depth-pipeline`을 쓰면 필수다.
+- `--depth-min-m <meters>`: depth sample에서 유효하다고 볼 최소 거리다. 기본값은 `0.05`다.
 
 부가 옵션:
 
@@ -90,6 +99,7 @@ Hailo detection + WebSocket:
 - `--intrinsics <path>`: camera intrinsics JSON 경로를 덮어쓴다.
 - `--extrinsics <path>`: camera extrinsics JSON 경로를 덮어쓴다.
 - `--robot-calibration <path>`: robot calibration 설정 파일 경로를 덮어쓴다.
+- `--objects <path>`: 객체 CAD/USD 카탈로그 JSON 경로를 덮어쓴다.
 
 제약 사항:
 
@@ -99,13 +109,44 @@ Hailo detection + WebSocket:
 - `--viewer-only`는 `--ws`와 같이 써야 한다.
 - `--viewer-only`에서는 모델과 메타데이터 인자를 쓰지 않는다.
 - `--camera-pipeline`, `--depth-pipeline`은 `--camera-backend isaacsim`에서만 쓴다.
+- detection에서 `--depth-pipeline`을 쓰면 `--depth-max-m`도 같이 줘야 한다.
+- 3D pick 후보는 `config/intrinsics.json`의 `width`, `height`, `fx`, `fy`, `cx`, `cy`와 depth frame 밝기값으로 계산한다.
 
 권장 실행 예시:
 
 ```bash
 ./bin/catcheye-pick --ws --viewer-only --camera-pipeline "<gst-color-pipeline>"
-./bin/catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline "<gst-color-pipeline>"
+./bin/catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline "<gst-color-pipeline>" --depth-pipeline "<gst-depth-pipeline>" --depth-max-m 5.0
 ```
+
+## WebSocket metadata
+
+`viewer_frame` metadata는 detection 실행에서 아래 값을 포함한다.
+
+- `detections[].position`: bbox 중심 depth sample을 camera intrinsics로 투영한 camera 좌표다.
+- `pick_candidates[]`: `position`이 있는 detection만 pick 후보로 변환한다.
+- `pick_candidates[].object_id`: 현재 frame 안의 개별 객체 후보 id다. 같은 제품이 pallet 위에 여러 개 있으면 서로 다른 `object_id`를 갖는다.
+- `pick_candidates[].product_id`: CAD/USD 카탈로그에 등록된 제품군 id다. 같은 제품 여러 개는 같은 `product_id`를 갖는다.
+- `pick_candidates[].pose_camera`: camera 좌표계 기준 제품 pose다. 지금은 bbox+depth 기반 translation과 기본 rotation만 채운다.
+- `pick_candidates[].pick_point_camera_m`: camera 좌표계 pick point다.
+- `pick_candidates[].robot`: `config/robot_calibration.json`이 켜져 있고 confidence 조건을 넘을 때 R1/R2 좌표를 포함한다.
+- `pose_estimates[]`: 외부 pose estimator가 `/api/pose-estimates`로 넣은 6D pose 결과다.
+- `pose_estimates[].pick_point_camera_m`: `pose_camera * config/objects.json grasp.pick_point_object_m` 결과다.
+
+## 객체 카탈로그
+
+객체별 CAD/USD 기준 정보는 `config/objects.json`에 둔다.
+
+현재 등록된 제품:
+
+- product_id: `test_part`
+- STEP: `assets/cad/test_part.step`
+- USD: `assets/usd/test_part.usd`
+- USD unit: `metersPerUnit = 0.001`
+- object bbox: `0.32 x 0.22 x 0.01 m`
+- grasp point: `[0.22466, 0.0951907, -0.005]`
+
+`product_id`는 제품군 id다. `object_id`는 pallet 위에 실제로 놓인 개별 객체 instance id다.
 
 ## HTTP API
 
@@ -114,26 +155,55 @@ Hailo detection + WebSocket:
 | `GET` | `/api/device-info` | 앱 식별 정보 |
 | `GET` | `/api/camera/intrinsics` | camera intrinsics JSON |
 | `GET` | `/api/camera/extrinsics` | camera extrinsics JSON |
+| `GET` | `/api/objects` | object CAD/USD catalog JSON |
+| `GET/PUT` | `/api/pose-estimates` | 외부 pose estimator 결과 |
 | `GET/PUT` | `/api/roi` | person ROI |
 | `GET/PUT` | `/api/pallet-roi` | pallet ROI |
 | `GET/PUT` | `/api/robot-calibration` | robot calibration |
+
+Pose estimator 결과 입력:
+
+```bash
+curl -X PUT http://127.0.0.1:8090/api/pose-estimates \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "estimates": [
+      {
+        "object_id": "test_part:1",
+        "product_id": "test_part",
+        "confidence": 0.92,
+        "translation_m": [0.12, -0.03, 0.71],
+        "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+      }
+    ]
+  }'
+```
+
+`rotation_quat_xyzw`는 정규화된 quaternion이어야 한다. `product_id`가 `config/objects.json`에 없거나 grasp point가 없으면 요청은 실패한다.
 
 ## 디렉터리 구조
 
 ```text
 .
 ├── CMakeLists.txt
+├── assets/
+│   ├── cad/
+│   │   └── test_part.step
+│   └── usd/
+│       └── test_part.usd
 ├── cmake/
 ├── config/
 │   ├── pallet_roi_cam_default.json
 │   ├── intrinsics.json
 │   ├── extrinsics.json
+│   ├── objects.json
 │   ├── robot_calibration.json
 │   └── roi_cam_default.json
 ├── docker/
 ├── models/
 ├── scripts/
 │   ├── cmake.sh
+│   ├── run-d455-sim-hailo.sh
 │   ├── run-d455-sim.sh
 │   ├── run-rgb.sh
 │   └── run-rgb-hailo.sh

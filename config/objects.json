@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "unit": "m",
+  "objects": [
+    {
+      "product_id": "test_part",
+      "label": "test_part",
+      "cad_step_path": "assets/cad/test_part.step",
+      "usd_path": "assets/usd/test_part.usd",
+      "usd_prim_path": "/test_part/test_part",
+      "asset_unit": "mm",
+      "bbox_object_m": {
+        "min": [-0.015, -0.0075, -0.01],
+        "max": [0.305, 0.2125, 0.0],
+        "size": [0.32, 0.22, 0.01]
+      },
+      "symmetry": {
+        "type": "none"
+      },
+      "grasp": {
+        "pick_point_object_m": [0.22466, 0.0951907, -0.005],
+        "approach_axis_object": [0.0, 0.0, 1.0],
+        "source": "hole_center"
+      }
+    }
+  ]
+}

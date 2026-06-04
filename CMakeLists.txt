@@ -239,6 +239,11 @@ install(DIRECTORY models
     PATTERN "*.pyc" EXCLUDE
 )
 
+install(DIRECTORY assets
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/..
+    PATTERN ".DS_Store" EXCLUDE
+)
+
 install(DIRECTORY config
     DESTINATION ${CMAKE_INSTALL_DATADIR}/..
     PATTERN ".DS_Store" EXCLUDE
@@ -249,6 +254,7 @@ install(PROGRAMS
     scripts/run-rgb-hailo.sh
     scripts/run-rgb.sh
     scripts/run-d455-sim.sh
+    scripts/run-d455-sim-hailo.sh
     DESTINATION scripts
 )
 

@@ -1,6 +1,7 @@
 #include "pick/config_json.hpp"
 
 #include <cctype>
+#include <sstream>
 #include <string>
 
 namespace catcheye::pick {
@@ -82,6 +83,55 @@ bool parse_json_float_field(std::string_view body, std::string_view key, float& 
     } catch (...) {
         return false;
     }
+}
+
+bool parse_json_string_field(std::string_view body, std::string_view key, std::string& output)
+{
+    std::string value;
+    if (!field_value(body, key, value) || value.size() < 2U || value.front() != '"' || value.back() != '"') {
+        return false;
+    }
+    output = value.substr(1U, value.size() - 2U);
+    return true;
+}
+
+bool parse_json_float_array_field(std::string_view body, std::string_view key, std::vector<float>& output)
+{
+    const std::string quoted_key = "\"" + std::string(key) + "\"";
+    const std::size_t key_pos = body.find(quoted_key);
+    if (key_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t colon_pos = body.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t open_pos = body.find('[', colon_pos + 1U);
+    const std::size_t close_pos = body.find(']', open_pos + 1U);
+    if (open_pos == std::string_view::npos || close_pos == std::string_view::npos) {
+        return false;
+    }
+
+    std::stringstream stream(std::string(body.substr(open_pos + 1U, close_pos - open_pos - 1U)));
+    std::string token;
+    std::vector<float> values;
+    while (std::getline(stream, token, ',')) {
+        token = trim_json_value(token);
+        if (token.empty()) {
+            return false;
+        }
+        try {
+            std::size_t consumed = 0;
+            values.push_back(std::stof(token, &consumed));
+            if (consumed != token.size()) {
+                return false;
+            }
+        } catch (...) {
+            return false;
+        }
+    }
+    output = std::move(values);
+    return true;
 }
 
 } // namespace catcheye::pick

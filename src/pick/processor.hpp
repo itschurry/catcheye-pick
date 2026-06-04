@@ -33,8 +33,24 @@ struct RobotPoint {
     float z = 0.0F;
 };
 
+struct PoseCamera {
+    RobotPoint translation_m;
+    float rotation_quat_xyzw[4] = {0.0F, 0.0F, 0.0F, 1.0F};
+};
+
+struct PoseEstimate {
+    std::string object_id;
+    std::string product_id;
+    float confidence = 0.0F;
+    PoseCamera pose_camera;
+    RobotPoint pick_point_camera_m;
+    std::optional<RobotPoint> r1;
+    std::optional<RobotPoint> r2;
+};
+
 struct PickCandidate {
     int id = 0;
+    std::string object_id;
     std::string product_id;
     float confidence = 0.0F;
     float center_x = 0.0F;
@@ -91,6 +107,7 @@ struct PickDetectionFrame {
     std::uint64_t frame_index = 0;
     std::vector<PickDetectionResult> detections;
     std::vector<PickCandidate> pick_candidates;
+    std::vector<PoseEstimate> pose_estimates;
 };
 
 class PickProcessor final {
@@ -101,9 +118,11 @@ class PickProcessor final {
     PickDetectionFrame process_detection_frame(const RgbdFrame& frame);
     PickViewerFrame process_viewer_frame(const RgbdFrame& frame) const;
     RobotCalibrationConfig robot_calibration() const;
+    std::vector<PoseEstimate> pose_estimates() const;
     bool update_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_pallet_roi_config(const catcheye::roi::CameraRoiConfig& roi_config);
     bool update_robot_calibration(RobotCalibrationConfig config);
+    bool update_pose_estimates(std::vector<PoseEstimate> estimates);
 
   private:
     struct RoiSnapshot {
@@ -115,7 +134,9 @@ class PickProcessor final {
     RoiSnapshot pallet_roi_snapshot() const;
 
     mutable std::mutex roi_mutex_;
+    mutable std::mutex pose_mutex_;
     PickProcessorConfig config_;
+    std::vector<PoseEstimate> pose_estimates_;
     std::unique_ptr<catcheye::IDetector> detector_;
 };
 

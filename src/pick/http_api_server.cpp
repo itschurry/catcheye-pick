@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "catcheye/http/roi_api.hpp"
 #include "pick/config_json.hpp"
@@ -68,6 +69,149 @@ std::string read_json_file(const std::string& path)
     return body;
 }
 
+std::string escape_json(std::string_view value)
+{
+    std::ostringstream oss;
+    for (const char ch : value) {
+        switch (ch) {
+        case '"':
+            oss << "\\\"";
+            break;
+        case '\\':
+            oss << "\\\\";
+            break;
+        case '\n':
+            oss << "\\n";
+            break;
+        case '\r':
+            oss << "\\r";
+            break;
+        case '\t':
+            oss << "\\t";
+            break;
+        default:
+            oss << ch;
+            break;
+        }
+    }
+    return oss.str();
+}
+
+std::vector<std::string_view> json_object_blocks(std::string_view body, std::string_view array_key)
+{
+    const std::string quoted_key = "\"" + std::string(array_key) + "\"";
+    const std::size_t key_pos = body.find(quoted_key);
+    if (key_pos == std::string_view::npos) {
+        return {};
+    }
+    const std::size_t array_open = body.find('[', key_pos + quoted_key.size());
+    if (array_open == std::string_view::npos) {
+        return {};
+    }
+
+    std::vector<std::string_view> blocks;
+    int depth = 0;
+    std::size_t object_start = std::string_view::npos;
+    for (std::size_t i = array_open + 1U; i < body.size(); ++i) {
+        const char ch = body[i];
+        if (ch == '{') {
+            if (depth == 0) {
+                object_start = i;
+            }
+            ++depth;
+        } else if (ch == '}') {
+            --depth;
+            if (depth == 0 && object_start != std::string_view::npos) {
+                blocks.push_back(body.substr(object_start, i - object_start + 1U));
+                object_start = std::string_view::npos;
+            }
+        } else if (ch == ']' && depth == 0) {
+            break;
+        }
+    }
+    return blocks;
+}
+
+bool parse_float_array3_field(std::string_view body, std::string_view key, RobotPoint& point)
+{
+    std::vector<float> values;
+    if (!parse_json_float_array_field(body, key, values) || values.size() != 3U) {
+        return false;
+    }
+    point = RobotPoint{
+        .x = values[0],
+        .y = values[1],
+        .z = values[2],
+    };
+    return true;
+}
+
+bool parse_float_array4_field(std::string_view body, std::string_view key, float output[4])
+{
+    std::vector<float> values;
+    if (!parse_json_float_array_field(body, key, values) || values.size() != 4U) {
+        return false;
+    }
+    for (std::size_t i = 0; i < 4U; ++i) {
+        output[i] = values[i];
+    }
+    return true;
+}
+
+bool parse_pose_estimates_body(std::string_view body, std::vector<PoseEstimate>& estimates)
+{
+    const auto blocks = json_object_blocks(body, "estimates");
+    if (blocks.empty()) {
+        return false;
+    }
+
+    std::vector<PoseEstimate> parsed;
+    parsed.reserve(blocks.size());
+    for (const std::string_view block : blocks) {
+        PoseEstimate estimate;
+        if (!parse_json_string_field(block, "object_id", estimate.object_id) ||
+            !parse_json_string_field(block, "product_id", estimate.product_id) ||
+            !parse_json_float_field(block, "confidence", estimate.confidence) ||
+            !parse_float_array3_field(block, "translation_m", estimate.pose_camera.translation_m) ||
+            !parse_float_array4_field(block, "rotation_quat_xyzw", estimate.pose_camera.rotation_quat_xyzw)) {
+            return false;
+        }
+        parsed.push_back(std::move(estimate));
+    }
+    estimates = std::move(parsed);
+    return true;
+}
+
+std::string pose_estimates_to_json(const std::vector<PoseEstimate>& estimates)
+{
+    std::ostringstream oss;
+    oss << "{\"pose_estimate_count\":" << estimates.size() << ",\"pose_estimates\":[";
+    for (std::size_t i = 0; i < estimates.size(); ++i) {
+        const auto& estimate = estimates[i];
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << "{\"object_id\":\"" << escape_json(estimate.object_id) << "\",\"product_id\":\""
+            << escape_json(estimate.product_id) << "\",\"confidence\":" << estimate.confidence
+            << ",\"pose_camera\":{\"translation_m\":[" << estimate.pose_camera.translation_m.x << ','
+            << estimate.pose_camera.translation_m.y << ',' << estimate.pose_camera.translation_m.z
+            << "],\"rotation_quat_xyzw\":[" << estimate.pose_camera.rotation_quat_xyzw[0] << ','
+            << estimate.pose_camera.rotation_quat_xyzw[1] << ',' << estimate.pose_camera.rotation_quat_xyzw[2] << ','
+            << estimate.pose_camera.rotation_quat_xyzw[3] << "]},\"pick_point_camera_m\":["
+            << estimate.pick_point_camera_m.x << ',' << estimate.pick_point_camera_m.y << ','
+            << estimate.pick_point_camera_m.z << "],\"robot\":";
+        if (estimate.r1.has_value() && estimate.r2.has_value()) {
+            oss << "{\"r1\":{\"x\":" << estimate.r1->x << ",\"y\":" << estimate.r1->y << ",\"z\":" << estimate.r1->z
+                << "},\"r2\":{\"x\":" << estimate.r2->x << ",\"y\":" << estimate.r2->y << ",\"z\":" << estimate.r2->z << "}}";
+        } else {
+            oss << "null";
+        }
+        oss << "}";
+    }
+    oss << "]}";
+    return oss.str();
+}
+
 } // namespace
 
 HttpApiServer::HttpApiServer(
@@ -77,6 +221,7 @@ HttpApiServer::HttpApiServer(
     std::string intrinsics_config_path,
     std::string extrinsics_config_path,
     std::string robot_calibration_config_path,
+    std::string object_catalog_config_path,
     PickProcessor* processor)
     : config_(std::move(config)),
       roi_config_path_(std::move(roi_config_path)),
@@ -84,6 +229,7 @@ HttpApiServer::HttpApiServer(
       intrinsics_config_path_(std::move(intrinsics_config_path)),
       extrinsics_config_path_(std::move(extrinsics_config_path)),
       robot_calibration_config_path_(std::move(robot_calibration_config_path)),
+      object_catalog_config_path_(std::move(object_catalog_config_path)),
       processor_(processor)
 {}
 
@@ -139,6 +285,23 @@ bool HttpApiServer::start()
         return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
     });
 
+    server_->add_route("/api/objects", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return handle_get_objects();
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
+    server_->add_route("/api/pose-estimates", [this](const catcheye::http::HttpRequest& request) {
+        if (request.method == "GET") {
+            return handle_get_pose_estimates();
+        }
+        if (request.method == "PUT") {
+            return handle_put_pose_estimates(request.body);
+        }
+        return catcheye::http::HttpResponse{405, "Method Not Allowed", catcheye::http::json_error_body("method not allowed")};
+    });
+
     server_->add_route("/api/robot-calibration", [this](const catcheye::http::HttpRequest& request) {
         if (request.method == "GET") {
             return handle_get_robot_calibration();
@@ -181,6 +344,32 @@ catcheye::http::HttpResponse HttpApiServer::handle_get_extrinsics() const
     } catch (const std::exception& e) {
         return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
     }
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_get_objects() const
+{
+    try {
+        return {200, "OK", read_json_file(object_catalog_config_path_)};
+    } catch (const std::exception& e) {
+        return {500, "Internal Server Error", catcheye::http::json_error_body(e.what())};
+    }
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_get_pose_estimates() const
+{
+    return {200, "OK", pose_estimates_to_json(processor_->pose_estimates())};
+}
+
+catcheye::http::HttpResponse HttpApiServer::handle_put_pose_estimates(const std::string& body) const
+{
+    std::vector<PoseEstimate> estimates;
+    if (!parse_pose_estimates_body(body, estimates)) {
+        return {400, "Bad Request", catcheye::http::json_error_body("invalid pose estimates JSON body")};
+    }
+    if (!processor_->update_pose_estimates(std::move(estimates))) {
+        return {400, "Bad Request", catcheye::http::json_error_body("pose estimates failed validation")};
+    }
+    return handle_get_pose_estimates();
 }
 
 catcheye::http::HttpResponse HttpApiServer::handle_get_robot_calibration() const
