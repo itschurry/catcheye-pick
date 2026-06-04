@@ -20,18 +20,17 @@ Commands:
 
 Profiles:
   debug
-  release
-  release-hailo (default)
+  release (default)
 
 Examples:
   scripts/cmake.sh build
-  scripts/cmake.sh all release-hailo
+  scripts/cmake.sh all release
   scripts/cmake.sh clean
 EOF
 }
 
 command="${1:-}"
-profile="${2:-release-hailo}"
+profile="${2:-release}"
 
 if [[ -z "$command" || "$command" == "-h" || "$command" == "--help" ]]; then
   usage
@@ -42,7 +41,6 @@ build_dir() {
   case "$profile" in
     debug) echo "build/debug" ;;
     release) echo "build/release" ;;
-    release-hailo) echo "build/release-hailo" ;;
     *) echo "unknown profile: $profile" >&2; exit 2 ;;
   esac
 }
@@ -51,7 +49,6 @@ install_dir() {
   case "$profile" in
     debug) echo "install/debug" ;;
     release) echo "install/release" ;;
-    release-hailo) echo "install/release-hailo" ;;
     *) echo "unknown profile: $profile" >&2; exit 2 ;;
   esac
 }
@@ -59,7 +56,7 @@ install_dir() {
 config_name() {
   case "$profile" in
     debug) echo "Debug" ;;
-    release|release-hailo) echo "Release" ;;
+    release) echo "Release" ;;
     *) echo "unknown profile: $profile" >&2; exit 2 ;;
   esac
 }
@@ -67,8 +64,7 @@ config_name() {
 configure_args() {
   case "$profile" in
     debug) echo "-DCMAKE_BUILD_TYPE=Debug" ;;
-    release) echo "-DCMAKE_BUILD_TYPE=Release" ;;
-    release-hailo) echo "-DCMAKE_BUILD_TYPE=Release -DCATCHEYE_VISION_DETECTION_ENABLE_HAILO=ON" ;;
+    release) echo "-DCMAKE_BUILD_TYPE=Release -DCATCHEYE_VISION_DETECTION_ENABLE_HAILO=ON" ;;
     *) echo "unknown profile: $profile" >&2; exit 2 ;;
   esac
 }
