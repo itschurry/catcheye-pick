@@ -63,28 +63,60 @@ Hailo detection + WebSocket:
   --depth-pipeline "souphttpsrc location=http://210.120.123.164:8080/depth.mjpg is-live=true do-timestamp=true ! multipartdemux ! jpegdec ! videoconvert ! video/x-raw,format=NV12,width=1280,height=720"
 ```
 
-## 주요 옵션
+## 실행 옵션
 
-| 옵션 | 설명 |
-| --- | --- |
-| `-h`, `--help` | 실행 옵션 도움말 출력 |
-| `--input-source camera\|image\|video` | 입력 형태, 현재 실행 구현은 `camera`만 있음 |
-| `--camera-backend realsense\|isaacsim` | 카메라 수신 방식, 현재 실행 구현은 `isaacsim`만 있음 |
-| `--camera-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 필수 color GStreamer 입력 |
-| `--depth-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 depth MJPEG 입력 |
-| `--viewer-only` | detection 없이 영상만 송출, `--ws` 필요 |
-| `--ws [port]` | WebSocket 송출 활성화, 기본 `8080` |
-| `--http-port <port>` | HTTP API 포트, 기본 `8090` |
-| `--detector ncnn\|hailo` | detection backend, 기본 `ncnn` |
-| `--hef <path>` | Hailo HEF 모델 경로 |
-| `--metadata <path>` | metadata YAML 경로, 위치 인자 metadata보다 우선 |
-| `--num-threads <count>` | NCNN inference thread 수, 기본 `2` |
-| `--roi <path>` | person ROI config, 기본 `config/roi_cam_default.json` |
-| `--pallet-roi <path>` | pallet ROI config, 기본 `config/pallet_roi_cam_default.json` |
-| `--intrinsics <path>` | camera intrinsics JSON 경로, 기본 `config/intrinsics.json` |
-| `--extrinsics <path>` | camera extrinsics JSON 경로, 기본 `config/extrinsics.json` |
-| `--robot-calibration <path>` | robot calibration config, 기본 `config/robot_calibration.json` |
-| `--rtsp` | 지원하지 않음 |
+기본 형식:
+
+```bash
+./bin/catcheye-pick [입력 옵션] [부가 옵션] [model.param] [model.bin] [metadata.yaml]
+```
+
+입력 옵션:
+
+- `--input-source <camera|image|video>`: 입력 형태를 지정한다. 현재 실행 구현은 `camera`만 있다.
+- `--camera-backend <isaacsim|realsense>`: 카메라 수신 방식을 지정한다. 현재 실행 구현은 `isaacsim`만 있다.
+- `--camera-pipeline <pipeline>`: `--camera-backend isaacsim`에서 쓰는 color GStreamer 입력이다.
+- `--depth-pipeline <pipeline>`: `--camera-backend isaacsim`에서 쓰는 depth visualization GStreamer 입력이다.
+
+부가 옵션:
+
+- `-h`, `--help`: 실행 옵션 도움말을 출력한다.
+- `--ws [port]`: WebSocket 결과 송출을 켠다. 포트를 생략하면 기본 `8080`을 쓴다.
+- `--http-port <port>`: HTTP API 포트를 지정한다. 기본값은 `8090`이다.
+- `--viewer-only`: 검출 없이 카메라 프레임만 송출한다. `--ws`가 필요하다.
+- `--detector <ncnn|hailo>`: detector 백엔드를 선택한다. 기본값은 `ncnn`이다.
+- `--hef <path>`: Hailo 백엔드에서 사용할 HEF 모델 경로를 지정한다.
+- `--metadata <path>`: 메타데이터 YAML 경로를 지정한다. 위치 인자 metadata보다 우선한다.
+- `--num-threads <count>`: NCNN 추론 스레드 수를 지정한다. 기본값은 `2`다.
+- `--roi <path>`: person ROI 설정 파일 경로를 덮어쓴다.
+- `--pallet-roi <path>`: pallet ROI 설정 파일 경로를 덮어쓴다.
+- `--intrinsics <path>`: camera intrinsics JSON 경로를 덮어쓴다.
+- `--extrinsics <path>`: camera extrinsics JSON 경로를 덮어쓴다.
+- `--robot-calibration <path>`: robot calibration 설정 파일 경로를 덮어쓴다.
+
+위치 인자:
+
+- `model.param`: 기본 NCNN param 경로를 덮어쓴다.
+- `model.bin`: 기본 NCNN bin 경로를 덮어쓴다.
+- `metadata.yaml`: 기본 메타데이터 경로를 덮어쓴다.
+
+제약 사항:
+
+- `--input-source image`, `--input-source video`는 아직 구현되어 있지 않다.
+- `--camera-backend realsense`는 아직 구현되어 있지 않다.
+- `--camera-backend isaacsim`은 `--camera-pipeline`이 필요하다.
+- `--viewer-only`는 `--ws`와 같이 써야 한다.
+- `--viewer-only`에서는 모델과 메타데이터 인자를 쓰지 않는다.
+- `--camera-pipeline`, `--depth-pipeline`은 `--camera-backend isaacsim`에서만 쓴다.
+- `--rtsp`는 지원하지 않는다.
+
+권장 실행 예시:
+
+```bash
+./bin/catcheye-pick --ws --viewer-only --camera-pipeline "<gst-color-pipeline>"
+./bin/catcheye-pick --ws 8080 --detector ncnn --camera-pipeline "<gst-color-pipeline>"
+./bin/catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline "<gst-color-pipeline>"
+```
 
 ## HTTP API
 
