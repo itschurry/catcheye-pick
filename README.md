@@ -21,6 +21,12 @@ docker compose -f docker/docker-compose.dev.yml run --rm catcheye-pick-dev
 
 ## 실행
 
+실행 옵션 도움말:
+
+```bash
+./bin/catcheye-pick --help
+```
+
 Isaac Sim D455 영상 수신 후 WebSocket 송출:
 
 ```bash
@@ -61,21 +67,24 @@ Hailo detection + WebSocket:
 
 | 옵션 | 설명 |
 | --- | --- |
+| `-h`, `--help` | 실행 옵션 도움말 출력 |
 | `--input-source camera\|image\|video` | 입력 형태, 현재 실행 구현은 `camera`만 있음 |
 | `--camera-backend realsense\|isaacsim` | 카메라 수신 방식, 현재 실행 구현은 `isaacsim`만 있음 |
 | `--camera-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 필수 color GStreamer 입력 |
 | `--depth-pipeline <pipe>` | `--camera-backend isaacsim`에서 쓰는 depth MJPEG 입력 |
-| `--viewer-only` | detection 없이 영상만 송출 |
+| `--viewer-only` | detection 없이 영상만 송출, `--ws` 필요 |
 | `--ws [port]` | WebSocket 송출 활성화, 기본 `8080` |
 | `--http-port <port>` | HTTP API 포트, 기본 `8090` |
-| `--detector ncnn\|hailo` | detection backend |
+| `--detector ncnn\|hailo` | detection backend, 기본 `ncnn` |
 | `--hef <path>` | Hailo HEF 모델 경로 |
-| `--metadata <path>` | metadata YAML 경로 |
-| `--roi <path>` | person ROI config |
-| `--pallet-roi <path>` | pallet ROI config |
+| `--metadata <path>` | metadata YAML 경로, 위치 인자 metadata보다 우선 |
+| `--num-threads <count>` | NCNN inference thread 수, 기본 `2` |
+| `--roi <path>` | person ROI config, 기본 `config/roi_cam_default.json` |
+| `--pallet-roi <path>` | pallet ROI config, 기본 `config/pallet_roi_cam_default.json` |
 | `--intrinsics <path>` | camera intrinsics JSON 경로, 기본 `config/intrinsics.json` |
 | `--extrinsics <path>` | camera extrinsics JSON 경로, 기본 `config/extrinsics.json` |
-| `--robot-calibration <path>` | robot calibration config |
+| `--robot-calibration <path>` | robot calibration config, 기본 `config/robot_calibration.json` |
+| `--rtsp` | 지원하지 않음 |
 
 ## HTTP API
 
