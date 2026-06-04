@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -85,6 +86,14 @@ CameraBackend parse_camera_backend(std::string_view value)
         return CameraBackend::IsaacSim;
     }
     throw std::invalid_argument("unknown camera backend: " + std::string(value));
+}
+
+std::string_view read_required_value(std::span<char* const> args, std::size_t& index, std::string_view flag)
+{
+    if (index + 1 >= args.size()) {
+        throw std::invalid_argument(std::string(flag) + " requires a value");
+    }
+    return args[++index];
 }
 
 const char* input_source_name(InputSourceKind kind)
@@ -331,91 +340,50 @@ AppOptions parse_app_options(int argc, char** argv)
 {
     AppOptions options;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view arg(argv[i]);
+    const std::span<char* const> args(argv, static_cast<std::size_t>(argc));
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string_view arg(args[i]);
 
         if (arg == "--help" || arg == "-h") {
             options.show_help = true;
         } else if (arg == "--viewer-only") {
             options.viewer_only = true;
         } else if (arg == "--input-source") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--input-source requires a value");
-            }
-            options.input_source = parse_input_source(argv[++i]);
+            options.input_source = parse_input_source(read_required_value(args, i, arg));
         } else if (arg == "--camera-backend") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--camera-backend requires a value");
-            }
-            options.camera_backend = parse_camera_backend(argv[++i]);
+            options.camera_backend = parse_camera_backend(read_required_value(args, i, arg));
         } else if (arg == "--ws") {
             if (options.publisher_type != PublisherType::None) {
                 throw std::invalid_argument("only one publisher can be selected at a time");
             }
             options.publisher_type = PublisherType::WebSocket;
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                options.websocket_port = std::stoi(argv[++i]);
+            if (i + 1 < args.size() && args[i + 1][0] != '-') {
+                options.websocket_port = std::stoi(std::string(read_required_value(args, i, arg)));
             }
         } else if (arg == "--http-port") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--http-port requires a value");
-            }
-            options.http_port = std::stoi(argv[++i]);
+            options.http_port = std::stoi(std::string(read_required_value(args, i, arg)));
         } else if (arg == "--camera-pipeline") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--camera-pipeline requires a value");
-            }
-            options.camera_pipeline = argv[++i];
+            options.camera_pipeline = read_required_value(args, i, arg);
         } else if (arg == "--depth-pipeline") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--depth-pipeline requires a value");
-            }
-            options.depth_pipeline = argv[++i];
+            options.depth_pipeline = read_required_value(args, i, arg);
         } else if (arg == "--roi") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--roi requires a value");
-            }
-            options.roi_config_path = argv[++i];
+            options.roi_config_path = read_required_value(args, i, arg);
         } else if (arg == "--pallet-roi") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--pallet-roi requires a value");
-            }
-            options.pallet_roi_config_path = argv[++i];
+            options.pallet_roi_config_path = read_required_value(args, i, arg);
         } else if (arg == "--intrinsics") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--intrinsics requires a value");
-            }
-            options.intrinsics_config_path = argv[++i];
+            options.intrinsics_config_path = read_required_value(args, i, arg);
         } else if (arg == "--extrinsics") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--extrinsics requires a value");
-            }
-            options.extrinsics_config_path = argv[++i];
+            options.extrinsics_config_path = read_required_value(args, i, arg);
         } else if (arg == "--robot-calibration") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--robot-calibration requires a value");
-            }
-            options.robot_calibration_config_path = argv[++i];
+            options.robot_calibration_config_path = read_required_value(args, i, arg);
         } else if (arg == "--detector") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--detector requires a value");
-            }
-            options.detector_backend = parse_detector_backend(argv[++i]);
+            options.detector_backend = parse_detector_backend(read_required_value(args, i, arg));
         } else if (arg == "--hef") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--hef requires a value");
-            }
-            options.hef_path = argv[++i];
+            options.hef_path = read_required_value(args, i, arg);
         } else if (arg == "--metadata") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--metadata requires a value");
-            }
-            options.metadata_path = argv[++i];
+            options.metadata_path = read_required_value(args, i, arg);
         } else if (arg == "--num-threads") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--num-threads requires a value");
-            }
-            options.num_threads = std::stoi(argv[++i]);
+            options.num_threads = std::stoi(std::string(read_required_value(args, i, arg)));
         } else if (arg == "--rtsp") {
             throw std::invalid_argument("--rtsp is not supported by catcheye-pick");
         } else if (!arg.empty() && arg.front() == '-') {
