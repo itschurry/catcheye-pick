@@ -32,7 +32,6 @@ void print_usage()
 {
     std::cout << "Usage:\n"
               << "  catcheye-pick [options]\n"
-              << "  catcheye-pick [options] <ncnn.param> <ncnn.bin> [metadata.yaml]\n"
               << "\n"
               << "Options:\n"
               << "  -h, --help                  Show this help\n"
@@ -43,10 +42,9 @@ void print_usage()
               << "  --viewer-only               Disable detection; requires --ws\n"
               << "  --ws [port]                 Publish frames over WebSocket (default port: 8080)\n"
               << "  --http-port <port>          HTTP API port (default: 8090)\n"
-              << "  --detector <name>           Detector backend: ncnn | hailo (default: ncnn)\n"
+              << "  --detector <name>           Detector backend: hailo (default: hailo)\n"
               << "  --hef <path>                Hailo HEF model path\n"
-              << "  --metadata <path>           Detector metadata YAML path; overrides positional metadata\n"
-              << "  --num-threads <count>       NCNN inference threads (default: 2)\n"
+              << "  --metadata <path>           Detector metadata YAML path\n"
               << "  --roi <path>                Person ROI config path (default: config/roi_cam_default.json)\n"
               << "  --pallet-roi <path>         Pallet ROI config path (default: config/pallet_roi_cam_default.json)\n"
               << "  --intrinsics <path>         Camera intrinsics JSON path (default: config/intrinsics.json)\n"
@@ -56,15 +54,11 @@ void print_usage()
               << "Examples:\n"
               << "  catcheye-pick --help\n"
               << "  catcheye-pick --ws --viewer-only --camera-pipeline \"<gst-color-pipeline>\"\n"
-              << "  catcheye-pick --ws 8080 --detector ncnn --camera-pipeline \"<gst-color-pipeline>\"\n"
               << "  catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline \"<gst-color-pipeline>\"\n";
 }
 
 catcheye::DetectorBackend parse_detector_backend(std::string_view value)
 {
-    if (value == "ncnn") {
-        return catcheye::DetectorBackend::Ncnn;
-    }
     if (value == "hailo") {
         return catcheye::DetectorBackend::Hailo;
     }
@@ -142,8 +136,6 @@ const char* publisher_name(PublisherType type)
 const char* detector_backend_name(catcheye::DetectorBackend backend)
 {
     switch (backend) {
-    case catcheye::DetectorBackend::Ncnn:
-        return "ncnn";
     case catcheye::DetectorBackend::Hailo:
         return "hailo";
     }
@@ -390,14 +382,10 @@ AppOptions parse_app_options(int argc, char** argv)
             options.hef_path = read_required_value(args, i, arg);
         } else if (arg == "--metadata") {
             options.metadata_path = read_required_value(args, i, arg);
-        } else if (arg == "--num-threads") {
-            options.num_threads = std::stoi(std::string(read_required_value(args, i, arg)));
-        } else if (arg == "--rtsp") {
-            throw std::invalid_argument("--rtsp is not supported by catcheye-pick");
         } else if (!arg.empty() && arg.front() == '-') {
             throw std::invalid_argument("unknown option: " + std::string(arg));
         } else {
-            options.positional_args.emplace_back(arg);
+            throw std::invalid_argument("unexpected positional argument: " + std::string(arg));
         }
     }
 
@@ -410,14 +398,8 @@ AppOptions parse_app_options(int argc, char** argv)
     if (options.http_port <= 0) {
         throw std::invalid_argument("HTTP port must be a positive integer");
     }
-    if (options.num_threads <= 0) {
-        throw std::invalid_argument("--num-threads must be a positive integer");
-    }
     if (options.viewer_only && options.publisher_type != PublisherType::WebSocket) {
         throw std::invalid_argument("--viewer-only requires --ws");
-    }
-    if (options.viewer_only && !options.positional_args.empty()) {
-        throw std::invalid_argument("positional arguments are not used with --viewer-only");
     }
     if (options.viewer_only && (!options.hef_path.empty() || !options.metadata_path.empty())) {
         throw std::invalid_argument("model and metadata arguments are not used with --viewer-only");
@@ -444,28 +426,10 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
     bootstrap.processor_config.detection_enabled = !options.viewer_only;
     bootstrap.processor_config.detector.backend = options.detector_backend;
 
-    auto& ncnn_cfg = bootstrap.processor_config.detector.ncnn;
-    ncnn_cfg.param_path = resolve_default_model_path(executable_path, "yolo26s_ncnn_model/model.ncnn.param");
-    ncnn_cfg.bin_path = resolve_default_model_path(executable_path, "yolo26s_ncnn_model/model.ncnn.bin");
-    ncnn_cfg.metadata_path = options.metadata_path.empty()
-        ? resolve_default_model_path(executable_path, "yolo26s_ncnn_model/metadata.yaml")
-        : options.metadata_path;
-    ncnn_cfg.num_threads = options.num_threads;
-    ncnn_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
-    if (!options.positional_args.empty()) {
-        ncnn_cfg.param_path = options.positional_args[0];
-    }
-    if (options.positional_args.size() > 1) {
-        ncnn_cfg.bin_path = options.positional_args[1];
-    }
-    if (options.positional_args.size() > 2 && options.metadata_path.empty()) {
-        ncnn_cfg.metadata_path = options.positional_args[2];
-    }
-
     auto& hailo_cfg = bootstrap.processor_config.detector.hailo;
     hailo_cfg.hef_path = options.hef_path;
     hailo_cfg.metadata_path = options.metadata_path.empty()
-        ? resolve_default_model_path(executable_path, "yolo26s_ncnn_model/metadata.yaml")
+        ? resolve_default_model_path(executable_path, "yolo26m_hailo_model/metadata.yaml")
         : options.metadata_path;
     hailo_cfg.allowed_class_ids = {39, 41, 45, 58, 63, 64, 65, 66, 67, 73, 74, 75, 76};
 
@@ -515,10 +479,6 @@ AppBootstrap build_app_bootstrap(const AppOptions& options, const char* executab
         });
     }
 
-    if (!options.viewer_only && options.detector_backend == catcheye::DetectorBackend::Ncnn &&
-        (ncnn_cfg.param_path.empty() || ncnn_cfg.bin_path.empty())) {
-        throw std::runtime_error("NCNN model paths are required");
-    }
     if (!options.viewer_only && options.detector_backend == catcheye::DetectorBackend::Hailo && hailo_cfg.hef_path.empty()) {
         throw std::runtime_error("Hailo HEF path is required; pass --hef <model.hef>");
     }

@@ -39,12 +39,6 @@ Isaac Sim D455 영상 수신 후 WebSocket 송출:
 ./scripts/run-rgb.sh
 ```
 
-NCNN detection + WebSocket:
-
-```bash
-./scripts/run-rgb-ncnn.sh
-```
-
 Hailo detection + WebSocket:
 
 ```bash
@@ -68,7 +62,7 @@ Hailo detection + WebSocket:
 기본 형식:
 
 ```bash
-./bin/catcheye-pick [입력 옵션] [부가 옵션] [model.param] [model.bin] [metadata.yaml]
+./bin/catcheye-pick [입력 옵션] [부가 옵션]
 ```
 
 입력 옵션:
@@ -84,21 +78,14 @@ Hailo detection + WebSocket:
 - `--ws [port]`: WebSocket 결과 송출을 켠다. 포트를 생략하면 기본 `8080`을 쓴다.
 - `--http-port <port>`: HTTP API 포트를 지정한다. 기본값은 `8090`이다.
 - `--viewer-only`: 검출 없이 카메라 프레임만 송출한다. `--ws`가 필요하다.
-- `--detector <ncnn|hailo>`: detector 백엔드를 선택한다. 기본값은 `ncnn`이다.
+- `--detector <hailo>`: detector 백엔드를 선택한다. 기본값은 `hailo`다.
 - `--hef <path>`: Hailo 백엔드에서 사용할 HEF 모델 경로를 지정한다.
-- `--metadata <path>`: 메타데이터 YAML 경로를 지정한다. 위치 인자 metadata보다 우선한다.
-- `--num-threads <count>`: NCNN 추론 스레드 수를 지정한다. 기본값은 `2`다.
+- `--metadata <path>`: 메타데이터 YAML 경로를 지정한다. 기본값은 `models/yolo26m_hailo_model/metadata.yaml`이다.
 - `--roi <path>`: person ROI 설정 파일 경로를 덮어쓴다.
 - `--pallet-roi <path>`: pallet ROI 설정 파일 경로를 덮어쓴다.
 - `--intrinsics <path>`: camera intrinsics JSON 경로를 덮어쓴다.
 - `--extrinsics <path>`: camera extrinsics JSON 경로를 덮어쓴다.
 - `--robot-calibration <path>`: robot calibration 설정 파일 경로를 덮어쓴다.
-
-위치 인자:
-
-- `model.param`: 기본 NCNN param 경로를 덮어쓴다.
-- `model.bin`: 기본 NCNN bin 경로를 덮어쓴다.
-- `metadata.yaml`: 기본 메타데이터 경로를 덮어쓴다.
 
 제약 사항:
 
@@ -108,13 +95,11 @@ Hailo detection + WebSocket:
 - `--viewer-only`는 `--ws`와 같이 써야 한다.
 - `--viewer-only`에서는 모델과 메타데이터 인자를 쓰지 않는다.
 - `--camera-pipeline`, `--depth-pipeline`은 `--camera-backend isaacsim`에서만 쓴다.
-- `--rtsp`는 지원하지 않는다.
 
 권장 실행 예시:
 
 ```bash
 ./bin/catcheye-pick --ws --viewer-only --camera-pipeline "<gst-color-pipeline>"
-./bin/catcheye-pick --ws 8080 --detector ncnn --camera-pipeline "<gst-color-pipeline>"
 ./bin/catcheye-pick --ws --detector hailo --hef models/yolo26m_hailo_model/yolo26m.hef --camera-pipeline "<gst-color-pipeline>"
 ```
 
@@ -147,7 +132,6 @@ Hailo detection + WebSocket:
 │   ├── cmake.sh
 │   ├── run-d455-sim.sh
 │   ├── run-rgb.sh
-│   ├── run-rgb-ncnn.sh
 │   └── run-rgb-hailo.sh
 ├── src/
 │   ├── main.cpp

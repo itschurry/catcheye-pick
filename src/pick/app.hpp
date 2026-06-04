@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "catcheye/detection/detector_factory.hpp"
 #include "catcheye/input/frame_source.hpp"
@@ -43,11 +42,9 @@ struct AppOptions {
     std::string intrinsics_config_path;
     std::string extrinsics_config_path;
     std::string robot_calibration_config_path;
-    int num_threads = 2;
-    catcheye::DetectorBackend detector_backend = catcheye::DetectorBackend::Ncnn;
+    catcheye::DetectorBackend detector_backend = catcheye::DetectorBackend::Hailo;
     std::string hef_path;
     std::string metadata_path;
-    std::vector<std::string> positional_args;
 };
 
 struct AppBootstrap {

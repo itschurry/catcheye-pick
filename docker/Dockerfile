@@ -29,7 +29,6 @@ RUN set -eux; \
       flex bison xz-utils \
       libgstreamer1.0-dev \
       libgstreamer-plugins-base1.0-dev \
-      libgstrtspserver-1.0-dev \
       libdrm-dev \
       libevent-dev \
       libexif-dev \
@@ -98,21 +97,6 @@ RUN set -eux; \
       -Dpycamera=disabled; \
     ninja -C libcamera/build -j"$(nproc)"; \
     sudo meson install -C libcamera/build; \
-    sudo ldconfig
-
-# ncnn, built natively for arm64.
-RUN set -eux; \
-    git clone --depth 1 https://github.com/Tencent/ncnn.git; \
-    cmake -S ncnn -B ncnn/build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu \
-      -DNCNN_SHARED_LIB=ON \
-      -DNCNN_VULKAN=OFF \
-      -DNCNN_BUILD_TOOLS=OFF \
-      -DNCNN_BUILD_EXAMPLES=OFF; \
-    cmake --build ncnn/build -j"$(nproc)"; \
-    sudo cmake --install ncnn/build; \
     sudo ldconfig
 
 CMD ["bash"]

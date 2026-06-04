@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CATCHEYE_PICK_PATH="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-MODEL_DIR="$CATCHEYE_PICK_PATH/models/yolo26s_ncnn_model"
 ISAACSIM_HOST=210.120.123.164
 ISAACSIM_PORT=8080
 

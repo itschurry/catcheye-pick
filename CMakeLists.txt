@@ -8,7 +8,6 @@ project(catcheye-pick
 
 option(CATCHEYE_PICK_BUILD_TESTS "Build tests" OFF)
 option(CATCHEYE_PICK_BUILD_APP "Build main executable" ON)
-option(CATCHEYE_PICK_BUNDLE_RUNTIME_LIBS "Install runtime shared libraries with the app" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -247,39 +246,11 @@ install(DIRECTORY config
 
 install(PROGRAMS
     scripts/run-all-hailo.sh
-    scripts/run-all.sh
     scripts/run-rgb-hailo.sh
-    scripts/run-rgb-ncnn.sh
     scripts/run-rgb.sh
     scripts/run-d455-sim.sh
     DESTINATION scripts
 )
-
-if(CATCHEYE_PICK_BUNDLE_RUNTIME_LIBS)
-    set(CATCHEYE_NCNN_LIBRARY_DIRS)
-    if(CMAKE_LIBRARY_ARCHITECTURE)
-        list(APPEND CATCHEYE_NCNN_LIBRARY_DIRS
-            "/usr/local/lib/${CMAKE_LIBRARY_ARCHITECTURE}"
-            "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}"
-        )
-    endif()
-    list(APPEND CATCHEYE_NCNN_LIBRARY_DIRS "/usr/local/lib" "/usr/lib")
-
-    foreach(ncnn_library_dir IN LISTS CATCHEYE_NCNN_LIBRARY_DIRS)
-        if(EXISTS "${ncnn_library_dir}")
-            file(GLOB ncnn_libraries
-                "${ncnn_library_dir}/libncnn*.so"
-                "${ncnn_library_dir}/libncnn*.so.*"
-            )
-            list(APPEND CATCHEYE_NCNN_LIBRARIES ${ncnn_libraries})
-        endif()
-    endforeach()
-
-    if(CATCHEYE_NCNN_LIBRARIES)
-        list(REMOVE_DUPLICATES CATCHEYE_NCNN_LIBRARIES)
-        install(FILES ${CATCHEYE_NCNN_LIBRARIES} DESTINATION ${CMAKE_INSTALL_LIBDIR})
-    endif()
-endif()
 
 install(EXPORT catcheye_pick_targets
     FILE catcheye_pick_targets.cmake
