@@ -2,12 +2,21 @@
 set -euo pipefail
 
 PROFILE="${1:-release}"
+host_arch="$(uname -m)"
+case "$host_arch" in
+  x86_64) default_arch="amd64" ;;
+  aarch64) default_arch="arm64" ;;
+  *) default_arch="$host_arch" ;;
+esac
+ARCH="${2:-$default_arch}"
 CONTAINER_WORKDIR="${CATCHEYE_PICK_CONTAINER_WORKDIR:-/home/user/catcheye-pick}"
 HOST_WORKDIR="${CATCHEYE_PICK_HOST_WORKDIR:-$(pwd -P)}"
 
-case "$PROFILE" in
-  debug) BUILD_DIR="build/debug" ;;
-  release) BUILD_DIR="build/release" ;;
+case "$ARCH:$PROFILE" in
+  amd64:debug) BUILD_DIR="build/debug-amd64" ;;
+  amd64:release) BUILD_DIR="build/release-amd64" ;;
+  arm64:debug) BUILD_DIR="build/debug-arm64" ;;
+  arm64:release) BUILD_DIR="build/release-arm64" ;;
   *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
 esac
 

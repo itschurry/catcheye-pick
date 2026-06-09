@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CATCHEYE_PICK_PATH="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 ISAACSIM_HOST=210.120.123.164
-ISAACSIM_PORT=8080
+ISAACSIM_PORT=8211
 
 exec "$CATCHEYE_PICK_PATH/bin/catcheye-pick" \
   --ws \

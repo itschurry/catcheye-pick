@@ -2,10 +2,14 @@
 set -euo pipefail
 
 ENV_CONTENT=$(cat <<EOF
+UID=$(id -u)
+GID=$(id -g)
 USERNAME=user
-CONTAINER_HOME=/home/user
-GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+HOME=/home/user
 EOF
 )
 
-printf '%s\n' "$ENV_CONTENT" > docker/.env
+for dir in docker/*/; do
+  [ -d "$dir" ] || continue
+  printf '%s\n' "$ENV_CONTENT" > "${dir}.env"
+done

@@ -2,26 +2,65 @@
 
 RealSense D455 Isaac Sim 영상 수신과 RGB-D 기반 pick 후보 생성을 위한 CatchEye Pick 앱이다.
 
-이 브랜치는 `codex/realsense-d455-sim` 기준이다. Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 받고, 객체 CAD/USD 카탈로그와 Hailo 검출 bbox, depth frame을 조합해 camera 좌표계의 3D pick 후보를 WebSocket metadata로 송출한다.
+Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 받고, 객체 CAD/USD 카탈로그와 Hailo 검출 bbox, depth frame을 조합해 camera 좌표계의 3D pick 후보를 WebSocket metadata로 송출한다.
+
+지원 빌드 환경:
+
+- `amd64`: Isaac Sim 연동용. 기본 빌드는 `libcamera`, `HailoRT` 없이 빌드한다.
+- `arm64`: Raspberry Pi, NVIDIA Orin Nano 계열 하드웨어용. 기본 빌드는 `libcamera`, `HailoRT`를 켠다.
 
 ## 설치
 
 ```bash
 git submodule update --init --recursive
-docker compose -f docker/docker-compose.dev.yml run --rm catcheye-pick-dev
+./update_env.sh
+docker compose -f docker/amd64/docker-compose.dev.yml run --rm catcheye-pick-dev
 ```
 
 `third_party/librealsense`는 Intel RealSense SDK submodule이다.
 
-컨테이너 안에서 빌드:
+arm64 하드웨어 컨테이너:
+
+```bash
+docker compose -f docker/arm64/docker-compose.dev.yml run --rm catcheye-pick-dev
+```
+
+호스트에서 실행 중인 컨테이너를 대상으로 빌드:
 
 ```bash
 ./scripts/cmake.sh build
 ```
 
-`build/release/compile_commands.json`은 컨테이너 경로 기준이다.
+arm64 컨테이너를 명시해서 빌드:
+
+```bash
+CATCHEYE_DOCKER_ARCH=arm64 ./scripts/cmake.sh build
+```
+
+`build/release-amd64/compile_commands.json` 또는 `build/release-arm64/compile_commands.json`은 컨테이너 경로 기준이다.
 `build/compile_commands.json`은 macOS 호스트 경로 기준으로 변환된 파일이다.
 프로젝트 루트에는 `compile_commands.json`을 만들지 않는다.
+
+직접 CMake 설정:
+
+```bash
+cmake -S . -B build/release-amd64 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCATCHEYE_PICK_ENABLE_LIBCAMERA=OFF \
+  -DCATCHEYE_VISION_DETECTION_ENABLE_HAILO=OFF
+
+cmake -S . -B build/release-arm64 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCATCHEYE_PICK_ENABLE_LIBCAMERA=ON \
+  -DCATCHEYE_VISION_DETECTION_ENABLE_HAILO=ON
+```
+
+주요 CMake 옵션:
+
+- `CATCHEYE_PICK_ENABLE_LIBCAMERA`: `libcamera` 입력 백엔드 빌드 여부다. amd64 기본값은 `OFF`, arm64 기본값은 `ON`이다.
+- `CATCHEYE_VISION_DETECTION_ENABLE_HAILO`: HailoRT detector 백엔드 빌드 여부다. amd64 기본값은 `OFF`, arm64 기본값은 `ON`이다.
+- `CATCHEYE_PICK_BUILD_APP`: 실행 파일 빌드 여부다. 기본값은 `ON`이다.
+- `CATCHEYE_PICK_BUILD_TESTS`: 앱 테스트 빌드 여부다. 기본값은 `OFF`다.
 
 ## 실행
 
@@ -200,6 +239,8 @@ curl -X PUT http://127.0.0.1:8090/api/pose-estimates \
 │   ├── robot_calibration.json
 │   └── roi_cam_default.json
 ├── docker/
+│   ├── amd64/
+│   └── arm64/
 ├── models/
 ├── scripts/
 │   ├── cmake.sh

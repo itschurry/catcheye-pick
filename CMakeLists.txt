@@ -9,6 +9,15 @@ project(catcheye-pick
 option(CATCHEYE_PICK_BUILD_TESTS "Build tests" OFF)
 option(CATCHEYE_PICK_BUILD_APP "Build main executable" ON)
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(CATCHEYE_PICK_HARDWARE_DEFAULT ON)
+else()
+    set(CATCHEYE_PICK_HARDWARE_DEFAULT OFF)
+endif()
+
+option(CATCHEYE_PICK_ENABLE_LIBCAMERA "Build Raspberry Pi/Orin libcamera input backend" ${CATCHEYE_PICK_HARDWARE_DEFAULT})
+option(CATCHEYE_VISION_DETECTION_ENABLE_HAILO "Build HailoRT detector backend" ${CATCHEYE_PICK_HARDWARE_DEFAULT})
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -35,6 +44,7 @@ if(NOT EXISTS "${CATCHEYE_VISION_SDK_SOURCE_DIR}/CMakeLists.txt")
 endif()
 
 set(CATCHEYE_VISION_SDK_BUILD_TESTS OFF CACHE BOOL "Build tests for SDK libraries" FORCE)
+set(CATCHEYE_VISION_INPUT_ENABLE_LIBCAMERA ${CATCHEYE_PICK_ENABLE_LIBCAMERA} CACHE BOOL "Build libcamera input backend" FORCE)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn imgcodecs videoio)
@@ -123,6 +133,11 @@ endif()
 include(GNUInstallDirs)
 
 set(CATCHEYE_PICK_LAUNCHER "${CMAKE_CURRENT_BINARY_DIR}/catcheye-pick")
+if(CMAKE_LIBRARY_ARCHITECTURE)
+    set(CATCHEYE_GST_PLUGIN_PATH "/usr/local/lib/${CMAKE_LIBRARY_ARCHITECTURE}/gstreamer-1.0:/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/gstreamer-1.0")
+else()
+    set(CATCHEYE_GST_PLUGIN_PATH "/usr/local/lib/gstreamer-1.0:/usr/lib/gstreamer-1.0")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/catcheye-pick-launcher.sh.in"
     "${CATCHEYE_PICK_LAUNCHER}"
@@ -207,9 +222,16 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-input/include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+if(CATCHEYE_PICK_ENABLE_LIBCAMERA)
+    install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-input/include/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+else()
+    install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-input/include/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        PATTERN "libcamera_source.hpp" EXCLUDE
+    )
+endif()
 install(DIRECTORY ${CATCHEYE_VISION_SDK_SOURCE_DIR}/libs/vision-detection/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
