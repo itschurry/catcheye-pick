@@ -9,7 +9,7 @@ case "${CATCHEYE_DOCKER_ARCH:-$host_arch}" in
   *) echo "unknown arch: ${CATCHEYE_DOCKER_ARCH:-$host_arch}" >&2; exit 2 ;;
 esac
 
-CONTAINER="${CONTAINER:-catcheye-pick-develop}}"
+CONTAINER="${CONTAINER:-catcheye-pick-develop}"
 if [[ -z "$CONTAINER" ]]; then
   case "$arch" in
     amd64) CONTAINER="catcheye-pick-develop-amd64" ;;

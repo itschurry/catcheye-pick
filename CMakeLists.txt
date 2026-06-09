@@ -276,7 +276,6 @@ install(PROGRAMS
     scripts/run-rgb-hailo.sh
     scripts/run-rgb.sh
     scripts/run-d455-sim.sh
-    scripts/run-d455-sim-hailo.sh
     DESTINATION scripts
 )
 
