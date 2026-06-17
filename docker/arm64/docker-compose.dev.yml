@@ -1,11 +1,11 @@
-name: catcheye-pick-arm
+name: catcheye-pick-develop-arm64
 services:
-  catcheye-pick-dev:
+  catcheye-pick-develop-arm64:
     extends:
       file: docker-compose.base.yml
       service: robot-base
-    image: ghcr.io/itschurry/catcheye-pick:develop-arm
-    container_name: catcheye-pick-develop-arm
+    image: ghcr.io/itschurry/catcheye-pick:develop-arm64
+    container_name: catcheye-pick-develop-arm64
     working_dir: /home/user/catcheye-pick
     privileged: true
     environment:

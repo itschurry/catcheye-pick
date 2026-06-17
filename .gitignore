@@ -22,6 +22,7 @@ __pycache__/
 
 /.env
 docker/.env
+docker/*/.env
 **/*.hef
 
 /third_party/*.tar.gz

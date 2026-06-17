@@ -3,13 +3,13 @@ set -euo pipefail
 
 WORKDIR="${WORKDIR:-${CATCHEYE_PICK_CONTAINER_WORKDIR:-/home/user/catcheye-pick}}"
 host_arch="$(uname -m)"
-case "${CATCHEYE_DOCKER_ARCH:-$host_arch}" in
+case "${DOCKER_ARCH:-$host_arch}" in
   x86_64|amd64) arch="amd64" ;;
   aarch64|arm64) arch="arm64" ;;
-  *) echo "unknown arch: ${CATCHEYE_DOCKER_ARCH:-$host_arch}" >&2; exit 2 ;;
+  *) echo "unknown arch: ${DOCKER_ARCH:-$host_arch}" >&2; exit 2 ;;
 esac
 
-CONTAINER="${CONTAINER:-catcheye-pick-develop}"
+CONTAINER="${CONTAINER:-}"
 if [[ -z "$CONTAINER" ]]; then
   case "$arch" in
     amd64) CONTAINER="catcheye-pick-develop-amd64" ;;
@@ -38,7 +38,8 @@ Profiles:
 Examples:
   scripts/cmake.sh build
   scripts/cmake.sh all release
-  CATCHEYE_DOCKER_ARCH=arm64 scripts/cmake.sh build
+  DOCKER_ARCH=arm64 scripts/cmake.sh build
+  DOCKER_ARCH=arm64 CONTAINER=catcheye-pick-develop-arm64 scripts/cmake.sh all
   scripts/cmake.sh clean
 EOF
 }

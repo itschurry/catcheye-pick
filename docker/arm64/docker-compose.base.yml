@@ -3,7 +3,7 @@ services:
     platform: linux/arm64
     build:
       context: ../..
-      dockerfile: docker/arm/Dockerfile
+      dockerfile: docker/arm64/Dockerfile
       args:
         UID: ${UID:?run update_env.sh}
         GID: ${GID:?run update_env.sh}

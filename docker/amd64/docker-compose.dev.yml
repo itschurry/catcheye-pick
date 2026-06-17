@@ -1,11 +1,11 @@
-name: catcheye-pick-amd
+name: catcheye-pick-develop-amd64
 services:
-  catcheye-pick-dev:
+  catcheye-pick-develop-amd64:
     extends:
       file: docker-compose.base.yml
       service: robot-base
-    image: ghcr.io/itschurry/catcheye-pick:develop-amd
-    container_name: catcheye-pick-develop-amd
+    image: ghcr.io/itschurry/catcheye-pick:develop-amd64
+    container_name: catcheye-pick-develop-amd64
     working_dir: /home/user/catcheye-pick
     privileged: true
     environment:

@@ -14,15 +14,22 @@ Isaac Sim 서버가 송출하는 D455 RGB/Depth MJPEG 스트림을 GStreamer로 
 ```bash
 git submodule update --init --recursive
 ./update_env.sh
-docker compose -f docker/amd64/docker-compose.dev.yml run --rm catcheye-pick-dev
+docker compose -f docker/amd64/docker-compose.dev.yml run --rm catcheye-pick-develop-amd64
 ```
 
 `third_party/librealsense`는 Intel RealSense SDK submodule이다.
 
+amd64 호스트에서 arm64 컨테이너를 빌드하거나 실행하기 전에는 QEMU binfmt를 먼저 등록한다.
+이 작업이 없으면 arm64 이미지 빌드 중 `exec /bin/bash: exec format error`가 난다.
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64
+```
+
 arm64 하드웨어 컨테이너:
 
 ```bash
-docker compose -f docker/arm64/docker-compose.dev.yml run --rm catcheye-pick-dev
+docker compose -f docker/arm64/docker-compose.dev.yml run --rm catcheye-pick-develop-arm64
 ```
 
 호스트에서 실행 중인 컨테이너를 대상으로 빌드:
@@ -34,7 +41,7 @@ docker compose -f docker/arm64/docker-compose.dev.yml run --rm catcheye-pick-dev
 arm64 컨테이너를 명시해서 빌드:
 
 ```bash
-CATCHEYE_DOCKER_ARCH=arm64 ./scripts/cmake.sh build
+DOCKER_ARCH=arm64 ./scripts/cmake.sh build
 ```
 
 `build/release-amd64/compile_commands.json` 또는 `build/release-arm64/compile_commands.json`은 컨테이너 경로 기준이다.
